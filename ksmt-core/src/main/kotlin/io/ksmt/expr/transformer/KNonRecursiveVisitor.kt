@@ -1,5 +1,9 @@
 package io.ksmt.expr.transformer
 
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
 import io.ksmt.KContext
 import io.ksmt.expr.KAddArithExpr
 import io.ksmt.expr.KAndBinaryExpr
@@ -635,6 +639,19 @@ abstract class KNonRecursiveVisitor<V : Any>(
 
     override fun visit(expr: KUniversalQuantifier): KExprVisitResult<V> =
         visitExprAfterVisitedDefault(expr, expr.body, ::visitExpr)
+
+    // algebraic datatypes
+    override fun visit(expr: KAdtConstructorApp): KExprVisitResult<V> =
+        visitExprAfterVisitedDefault(expr, expr.args, ::visitApp)
+
+    override fun <T : KSort> visit(expr: KAdtSelectorApp<T>): KExprVisitResult<V> =
+        visitExprAfterVisitedDefault(expr, expr.value, ::visitApp)
+
+    override fun visit(expr: KAdtTesterApp): KExprVisitResult<V> =
+        visitExprAfterVisitedDefault(expr, expr.value, ::visitApp)
+
+    override fun <T : KSort> visit(expr: KAdtUpdateFieldApp<T>): KExprVisitResult<V> =
+        visitExprAfterVisitedDefault(expr, expr.value, expr.fieldValue, ::visitApp)
 
     /**
      * 1. Visit [dependencies] and merge their results.

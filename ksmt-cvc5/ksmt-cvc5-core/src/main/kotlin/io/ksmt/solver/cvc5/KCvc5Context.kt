@@ -30,6 +30,7 @@ import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KSortVisitor
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 
 class KCvc5Context(
     val termManager: KCvc5TermManager,
@@ -401,6 +402,8 @@ class KCvc5Context(
         }
 
         override fun visit(sort: KFpRoundingModeSort) = Unit
+
+        override fun visit(sort: KAdtSort) = Unit
 
         override fun visit(sort: KUninterpretedSort) = cvc5Ctx.addUninterpretedSort(sort)
 

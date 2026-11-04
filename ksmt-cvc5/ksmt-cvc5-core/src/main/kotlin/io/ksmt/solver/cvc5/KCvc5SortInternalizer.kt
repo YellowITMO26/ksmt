@@ -14,12 +14,16 @@ import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KSortVisitor
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 
 
 open class KCvc5SortInternalizer(
     private val cvc5Ctx: KCvc5Context
 ) : KSortVisitor<Sort> {
     private val tm: KCvc5TermManager = cvc5Ctx.termManager
+
+    override fun visit(sort: KAdtSort): Sort =
+        throw io.ksmt.solver.KSolverUnsupportedFeatureException("Unsupported sort $sort")
 
     override fun visit(sort: KBoolSort): Sort = cvc5Ctx.internalizeSort(sort) {
         tm.builder { booleanSort }

@@ -1,5 +1,10 @@
 package io.ksmt.expr.transformer
 
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.expr.KAddArithExpr
 import io.ksmt.expr.KAndBinaryExpr
 import io.ksmt.expr.KAndExpr
@@ -347,4 +352,10 @@ interface KTransformerBase {
 
     // uninterpreted sort value
     fun transform(expr: KUninterpretedSortValue): KExpr<KUninterpretedSort>
+
+    // algebraic datatypes
+    fun transform(expr: KAdtConstructorApp): KExpr<KAdtSort>
+    fun <T : KSort> transform(expr: KAdtSelectorApp<T>): KExpr<T>
+    fun transform(expr: KAdtTesterApp): KExpr<KBoolSort>
+    fun <T : KSort> transform(expr: KAdtUpdateFieldApp<T>): KExpr<KAdtSort>
 }

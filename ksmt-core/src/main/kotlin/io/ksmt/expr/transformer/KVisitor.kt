@@ -1,5 +1,10 @@
 package io.ksmt.expr.transformer
 
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.expr.KAddArithExpr
 import io.ksmt.expr.KAndBinaryExpr
 import io.ksmt.expr.KAndExpr
@@ -626,6 +631,23 @@ interface KVisitor<V> : KTransformer {
 
     override fun transform(expr: KUninterpretedSortValue): KExpr<KUninterpretedSort> = visitExpr(expr, ::visit)
 
+    // algebraic datatypes
+    fun visit(expr: KAdtConstructorApp): V = visitApp(expr)
+    fun <T : KSort> visit(expr: KAdtSelectorApp<T>): V = visitApp(expr)
+    fun visit(expr: KAdtTesterApp): V = visitApp(expr)
+    fun <T : KSort> visit(expr: KAdtUpdateFieldApp<T>): V = visitApp(expr)
+
+    override fun transform(expr: KAdtConstructorApp): KExpr<KAdtSort> =
+        visitExpr(expr, ::visit)
+
+    override fun <T : KSort> transform(expr: KAdtSelectorApp<T>): KExpr<T> =
+        visitExpr(expr, ::visit)
+
+    override fun transform(expr: KAdtTesterApp): KExpr<KBoolSort> =
+        visitExpr(expr, ::visit)
+
+    override fun <T : KSort> transform(expr: KAdtUpdateFieldApp<T>): KExpr<KAdtSort> =
+        visitExpr(expr, ::visit)
 }
 
 inline fun <V, E : KExpr<*>> KVisitor<V>.visitExpr(expr: E, visitor: (E) -> V): E {

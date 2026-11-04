@@ -1,6 +1,10 @@
 package io.ksmt.solver.z3
 
 import com.microsoft.z3.Native
+import io.ksmt.decl.KAdtCtorDecl
+import io.ksmt.decl.KAdtSelectorDecl
+import io.ksmt.decl.KAdtTesterDecl
+import io.ksmt.decl.KAdtUpdateFieldDecl
 import io.ksmt.decl.KConstDecl
 import io.ksmt.decl.KDecl
 import io.ksmt.decl.KDeclVisitor
@@ -43,6 +47,27 @@ open class KZ3DeclInternalizer(
             null,
             declSort
         )
+    }
+
+    override fun visit(decl: KAdtCtorDecl) {
+        val sort = sortInternalizer.internalizeZ3Sort(decl.adtSort)
+        lastInternalizedDecl = Native.getDatatypeSortConstructor(nCtx, sort, decl.constructorIndex)
+    }
+
+    override fun <S : KSort> visit(decl: KAdtSelectorDecl<S>) {
+        val sort = sortInternalizer.internalizeZ3Sort(decl.adtSort)
+        lastInternalizedDecl = Native.getDatatypeSortConstructorAccessor(
+            nCtx, sort, decl.constructorIndex, decl.fieldIndex
+        )
+    }
+
+    override fun visit(decl: KAdtTesterDecl) {
+        val sort = sortInternalizer.internalizeZ3Sort(decl.adtSort)
+        lastInternalizedDecl = Native.getDatatypeSortRecognizer(nCtx, sort, decl.constructorIndex)
+    }
+
+    override fun <S : KSort> visit(decl: KAdtUpdateFieldDecl<S>) {
+        error("Datatype update-field declaration ${decl.name} can't be internalized standalone")
     }
 
     fun internalizeZ3Decl(decl: KDecl<*>): Long = z3Ctx.internalizeDecl(decl) {

@@ -72,6 +72,7 @@ import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KSortVisitor
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.symfpu.operations.PackedFp
 import io.ksmt.symfpu.operations.UnpackedFp
 import io.ksmt.symfpu.operations.UnpackedFp.Companion.iteOp
@@ -592,6 +593,7 @@ class FpToBvTransformer(ctx: KContext, private val packedBvOptimization: Boolean
             sort.range.accept(this) || sort.domainSorts.any { it.accept(this) }
 
         override fun visit(sort: KUninterpretedSort): Boolean = false
+        override fun visit(sort: KAdtSort): Boolean = false
         override fun visit(sort: KBoolSort): Boolean = false
         override fun visit(sort: KIntSort): Boolean = false
         override fun visit(sort: KRealSort): Boolean = false
@@ -633,6 +635,7 @@ class FpToBvTransformer(ctx: KContext, private val packedBvOptimization: Boolean
         }
 
         override fun visit(sort: KUninterpretedSort): KSort = sort
+        override fun visit(sort: KAdtSort): KSort = sort
         override fun visit(sort: KBoolSort): KSort = sort
         override fun visit(sort: KIntSort): KSort = sort
         override fun visit(sort: KRealSort): KSort = sort

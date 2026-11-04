@@ -167,6 +167,17 @@ import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KSortVisitor
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.decl.KAdtCtorDecl
+import io.ksmt.decl.KAdtSelectorDecl
+import io.ksmt.decl.KAdtTesterDecl
+import io.ksmt.decl.KAdtUpdateFieldDecl
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
+import io.ksmt.sort.adt.KAdtDefinition
+import io.ksmt.sort.adt.KAdtSort
+import io.ksmt.sort.adt.KAdtTypeParameterSort
 
 @Suppress("LargeClass")
 @OptIn(ExperimentalUnsignedTypes::class)
@@ -297,6 +308,30 @@ class AstSerializer(
             }
         }
 
+        override fun visit(sort: KAdtTypeParameterSort) {
+            serializeSort(sort, SortKind.AdtTypeParameter) {
+                writeString(sort.name)
+            }
+        }
+
+        override fun visit(sort: KAdtSort) {
+            val groupIdx = serializeAdtGroup(sort.definition.group)
+            val serialized = serializationCtx.getAstIndex(sort)
+            if (serialized != NOT_INTERNALIZED) {
+                serializedSort = serialized
+                return
+            }
+            val definitionIdx = sort.definition.group.indexOfFirst { it === sort.definition }
+            val args = sort.args.let { args ->
+                IntArray(args.size) { args[it].serializeSort() }
+            }
+            serializeSort(sort, SortKind.Adt) {
+                writeInt(groupIdx)
+                writeInt(definitionIdx)
+                writeAstArray(args)
+            }
+        }
+
         private inline fun serializeSort(sort: KSort, kind: SortKind, sortArgs: AbstractBuffer.() -> Unit) {
             serializedSort = sort.serializeAst {
                 output.writeEnum(AstKind.Sort)
@@ -328,6 +363,37 @@ class AstSerializer(
             }
         }
 
+        override fun visit(decl: KAdtCtorDecl) =
+            serializeAdtDecl(decl, AdtDeclKind.Constructor, decl.adtSort, decl.constructorIndex)
+
+        override fun <S : KSort> visit(decl: KAdtSelectorDecl<S>) =
+            serializeAdtDecl(decl, AdtDeclKind.Selector, decl.adtSort, decl.constructorIndex, decl.fieldIndex)
+
+        override fun visit(decl: KAdtTesterDecl) =
+            serializeAdtDecl(decl, AdtDeclKind.Tester, decl.adtSort, decl.constructorIndex)
+
+        override fun <S : KSort> visit(decl: KAdtUpdateFieldDecl<S>) =
+            serializeAdtDecl(decl, AdtDeclKind.UpdateField, decl.adtSort, decl.constructorIndex, decl.fieldIndex)
+
+        private fun serializeAdtDecl(
+            decl: KDecl<*>,
+            kind: AdtDeclKind,
+            adtSort: KAdtSort,
+            constructorIndex: Int,
+            fieldIndex: Int? = null
+        ) {
+            val sort = adtSort.serializeSort()
+            serializedDecl = decl.serializeAst {
+                writeEnum(AstKind.AdtDecl)
+                writeEnum(kind)
+                writeAst(sort)
+                writeInt(constructorIndex)
+                if (fieldIndex != null) {
+                    writeInt(fieldIndex)
+                }
+            }
+        }
+
         fun serializeDecl(decl: KDecl<*>): Int {
             decl.accept(this)
             return serializedDecl
@@ -336,6 +402,44 @@ class AstSerializer(
 
     private fun AbstractBuffer.writeAst(idx: Int) {
         writeInt(idx)
+    }
+
+    private fun serializeAdtGroup(group: List<KAdtDefinition>): Int {
+        val existing = serializationCtx.getAdtGroupIndex(group)
+        if (existing != NOT_INTERNALIZED) {
+            return existing
+        }
+
+        val idx = serializationCtx.mkAdtGroupIdx(group)
+        output.writeInt(idx)
+        output.writeEnum(AstKind.AdtGroup)
+        output.writeInt(group.size)
+        group.forEach { definition ->
+            output.writeString(definition.name)
+            output.writeInt(definition.typeParameters.size)
+            definition.typeParameters.forEach { output.writeString(it.name) }
+        }
+        output.writeInt(AstSerializationCtx.SERIALIZED_AST_ENTRY_END)
+
+        val fieldSorts = group.map { definition ->
+            definition.constructors.map { ctor -> ctor.fields.map { it.sort.serializeSort() } }
+        }
+
+        output.writeInt(idx)
+        output.writeEnum(AstKind.AdtGroupBody)
+        group.forEachIndexed { definitionIdx, definition ->
+            output.writeInt(definition.constructors.size)
+            definition.constructors.forEachIndexed { ctorIdx, ctor ->
+                output.writeString(ctor.name)
+                output.writeInt(ctor.fields.size)
+                ctor.fields.forEachIndexed { fieldIdx, field ->
+                    output.writeString(field.name)
+                    output.writeAst(fieldSorts[definitionIdx][ctorIdx][fieldIdx])
+                }
+            }
+        }
+        output.writeInt(AstSerializationCtx.SERIALIZED_AST_ENTRY_END)
+        return idx
     }
 
     private fun AbstractBuffer.writeAstArray(asts: List<Int>) {
@@ -1135,6 +1239,47 @@ class AstSerializer(
             writeExpr {
                 writeAst(sortIdx)
                 writeAst(valueIdx)
+            }
+        }
+    }
+
+    override fun transform(expr: KAdtConstructorApp) = with(expr) {
+        transformList(args) { args: IntArray ->
+            val declIdx = decl.serializeDecl()
+            writeExpr {
+                writeAst(declIdx)
+                writeAstArray(args)
+            }
+        }
+    }
+
+    override fun <T : KSort> transform(expr: KAdtSelectorApp<T>) = with(expr) {
+        transform(value) { valueIdx: Int ->
+            val declIdx = decl.serializeDecl()
+            writeExpr {
+                writeAst(declIdx)
+                writeAst(valueIdx)
+            }
+        }
+    }
+
+    override fun transform(expr: KAdtTesterApp) = with(expr) {
+        transform(value) { valueIdx: Int ->
+            val declIdx = decl.serializeDecl()
+            writeExpr {
+                writeAst(declIdx)
+                writeAst(valueIdx)
+            }
+        }
+    }
+
+    override fun <T : KSort> transform(expr: KAdtUpdateFieldApp<T>) = with(expr) {
+        transform(value, fieldValue) { valueIdx: Int, fieldValueIdx: Int ->
+            val declIdx = decl.serializeDecl()
+            writeExpr {
+                writeAst(declIdx)
+                writeAst(valueIdx)
+                writeAst(fieldValueIdx)
             }
         }
     }

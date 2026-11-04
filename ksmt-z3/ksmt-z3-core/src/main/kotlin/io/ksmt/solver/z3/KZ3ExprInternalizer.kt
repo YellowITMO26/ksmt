@@ -4,6 +4,10 @@ import com.microsoft.z3.Native
 import com.microsoft.z3.mkQuantifier
 import io.ksmt.KContext
 import io.ksmt.decl.KDecl
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
 import io.ksmt.expr.KAddArithExpr
 import io.ksmt.expr.KAndBinaryExpr
 import io.ksmt.expr.KAndExpr
@@ -193,6 +197,26 @@ open class KZ3ExprInternalizer(
     override fun <T : KSort> transform(expr: KFunctionApp<T>) = with(expr) {
         transformArray(args) { args ->
             Native.mkApp(nCtx, decl.internalizeDecl(), args.size, args)
+        }
+    }
+
+    override fun transform(expr: KAdtConstructorApp) = with(expr) {
+        transformArray(args) { args ->
+            Native.mkApp(nCtx, decl.internalizeDecl(), args.size, args)
+        }
+    }
+
+    override fun <T : KSort> transform(expr: KAdtSelectorApp<T>) = with(expr) {
+        transform(value) { v: Long -> Native.mkApp(nCtx, decl.internalizeDecl(), 1, longArrayOf(v)) }
+    }
+
+    override fun transform(expr: KAdtTesterApp) = with(expr) {
+        transform(value) { v: Long -> Native.mkApp(nCtx, decl.internalizeDecl(), 1, longArrayOf(v)) }
+    }
+
+    override fun <T : KSort> transform(expr: KAdtUpdateFieldApp<T>) = with(expr) {
+        transform(value, fieldValue) { v: Long, f: Long ->
+            Native.datatypeUpdateField(nCtx, decl.selector.internalizeDecl(), v, f)
         }
     }
 

@@ -4,6 +4,7 @@ import io.github.cvc5.Solver
 import io.ksmt.solver.KSolverConfiguration
 import io.ksmt.solver.KSolverException
 import io.ksmt.solver.KSolverUniversalConfigurationBuilder
+import io.ksmt.solver.KSolverUnsupportedFeatureException
 import io.ksmt.solver.KSolverUnsupportedParameterException
 import io.ksmt.solver.KTheory
 import io.ksmt.solver.smtLib2String
@@ -72,6 +73,10 @@ class KCvc5SolverLazyConfiguration : KCvc5SolverConfiguration {
      * forbids it makes cvc5 reject the check, so the two are chosen together.
      * */
     override fun optimizeForTheories(theories: Set<KTheory>?, quantifiersAllowed: Boolean) {
+        if (theories != null && KTheory.DT in theories) {
+            throw KSolverUnsupportedFeatureException("Unsupported theory ${KTheory.DT}")
+        }
+
         declaredTheories = theories
 
         if (theories.isNullOrEmpty()) {

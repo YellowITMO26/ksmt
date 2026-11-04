@@ -183,6 +183,7 @@ import io.ksmt.sort.KFpSort
 import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 
 @Suppress("LargeClass")
 class KCvc5ExprInternalizer(
@@ -1151,6 +1152,18 @@ class KCvc5ExprInternalizer(
      * Since all Int values are known to be distinct, this
      * assertion forces that all values of T are also distinct.
      * */
+    override fun transform(expr: io.ksmt.expr.KAdtConstructorApp): KExpr<KAdtSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in cvc5 yet")
+
+    override fun <T : KSort> transform(expr: io.ksmt.expr.KAdtSelectorApp<T>): KExpr<T> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in cvc5 yet")
+
+    override fun transform(expr: io.ksmt.expr.KAdtTesterApp): KExpr<KBoolSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in cvc5 yet")
+
+    override fun <T : KSort> transform(expr: io.ksmt.expr.KAdtUpdateFieldApp<T>): KExpr<KAdtSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in cvc5 yet")
+
     override fun transform(expr: KUninterpretedSortValue): KExpr<KUninterpretedSort> = with(expr) {
         transform(mkUniqueValueDescriptor(expr.valueIdx)) { descriptorExpr: Term ->
             val exprSort = sort.internalizeSort()

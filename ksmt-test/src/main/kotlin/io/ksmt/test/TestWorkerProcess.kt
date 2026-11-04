@@ -29,6 +29,7 @@ import io.ksmt.solver.cvc5.KCvc5Solver
 import io.ksmt.solver.cvc5.KCvc5TermManager
 import io.github.cvc5.Solver as Cvc5Solver
 import io.ksmt.solver.z3.KZ3Context
+import io.ksmt.solver.z3.KZ3DatatypeRegistry
 import io.ksmt.solver.yices.*
 import io.ksmt.solver.z3.KZ3ExprConverter
 import io.ksmt.solver.z3.KZ3ExprInternalizer
@@ -39,12 +40,16 @@ import io.ksmt.utils.uncheckedCast
 class TestWorkerProcess : ChildProcessBase<TestProtocolModel>() {
     private var workerCtx: KContext? = null
     private var workerZ3Ctx: Context? = null
+    private var workerZ3Datatypes: KZ3DatatypeRegistry? = null
 
     private val ctx: KContext
         get() = workerCtx ?: error("Solver is not initialized")
 
     private val z3Ctx: Context
         get() = workerZ3Ctx ?: error("Solver is not initialized")
+
+    private val z3Datatypes: KZ3DatatypeRegistry
+        get() = workerZ3Datatypes ?: error("Solver is not initialized")
 
     private class OracleSolver(
         val solver: Solver,
@@ -58,7 +63,9 @@ class TestWorkerProcess : ChildProcessBase<TestProtocolModel>() {
 
     private fun create() {
         workerCtx = KContext()
-        workerZ3Ctx = Context()
+        workerZ3Ctx = Context().also {
+            workerZ3Datatypes = KZ3DatatypeRegistry(it)
+        }
         equalityChecks.clear()
         equalityCheckAssumptions.clear()
         solvers.clear()
@@ -73,6 +80,7 @@ class TestWorkerProcess : ChildProcessBase<TestProtocolModel>() {
         workerCtx?.close()
         workerZ3Ctx?.close()
         workerCtx = null
+        workerZ3Datatypes = null
         workerZ3Ctx = null
     }
 
@@ -91,7 +99,7 @@ class TestWorkerProcess : ChildProcessBase<TestProtocolModel>() {
     }
 
     private fun convertAssertions(nativeAssertions: List<Long>): List<KExpr<KBoolSort>> {
-        val context = KZ3Context(ctx, z3Ctx)
+        val context = KZ3Context(ctx, z3Ctx, z3Datatypes)
         return try {
             val converter = KZ3ExprConverter(ctx, context)
             with(converter) { nativeAssertions.map { it.convertExpr() } }
@@ -158,7 +166,7 @@ class TestWorkerProcess : ChildProcessBase<TestProtocolModel>() {
                 setParameters(params)
             }
         }
-        solvers.add(OracleSolver(solver, KZ3Context(ctx, z3Ctx)))
+        solvers.add(OracleSolver(solver, KZ3Context(ctx, z3Ctx, z3Datatypes)))
         return solvers.lastIndex
     }
 

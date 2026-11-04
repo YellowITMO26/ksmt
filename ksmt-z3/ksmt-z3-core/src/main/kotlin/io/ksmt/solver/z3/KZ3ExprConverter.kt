@@ -27,6 +27,10 @@ import io.ksmt.solver.KSolverUnsupportedFeatureException
 import io.ksmt.solver.util.ExprConversionResult
 import io.ksmt.solver.util.KExprConverterUtils.argumentsConversionRequired
 import io.ksmt.solver.util.KExprLongConverterBase
+import io.ksmt.sort.adt.KAdtCtorDefinition
+import io.ksmt.sort.adt.KAdtDefinition
+import io.ksmt.sort.adt.KAdtCtorFieldDefinition
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.sort.KArithSort
 import io.ksmt.sort.KArray2Sort
 import io.ksmt.sort.KArray3Sort
@@ -125,7 +129,7 @@ open class KZ3ExprConverter(
                 mkUninterpretedSort(name)
             }
             Z3_sort_kind.Z3_ROUNDING_MODE_SORT -> mkFpRoundingModeSort()
-            Z3_sort_kind.Z3_DATATYPE_SORT,
+            Z3_sort_kind.Z3_DATATYPE_SORT -> convertNativeDatatypeSort(sort)
             Z3_sort_kind.Z3_RELATION_SORT,
             Z3_sort_kind.Z3_FINITE_DOMAIN_SORT,
             Z3_sort_kind.Z3_SEQ_SORT,
@@ -151,6 +155,142 @@ open class KZ3ExprConverter(
 
             else -> mkArrayNSort(domain, range)
         }
+    }
+
+    private fun KAdtSort.internalizedSort(): Long = with(internalizer) { internalizeSort() }
+
+
+    private fun findDatatypeConstructorIndex(sort: KAdtSort, decl: Long): Int {
+        val nativeSort = sort.internalizedSort()
+        return sort.definition.constructors.indices.firstOrNull { idx ->
+            Native.isEqFuncDecl(nCtx, decl, Native.getDatatypeSortConstructor(nCtx, nativeSort, idx))
+        } ?: error("Datatype constructor not found in $sort")
+    }
+
+    private fun findDatatypeRecognizerIndex(sort: KAdtSort, decl: Long): Int {
+        val nativeSort = sort.internalizedSort()
+        return sort.definition.constructors.indices.firstOrNull { idx ->
+            Native.isEqFuncDecl(nCtx, decl, Native.getDatatypeSortRecognizer(nCtx, nativeSort, idx))
+        } ?: error("Datatype recognizer not found in $sort")
+    }
+
+    private fun findDatatypeAccessorIndex(sort: KAdtSort, decl: Long): Pair<Int, Int> {
+        val nativeSort = sort.internalizedSort()
+        sort.definition.constructors.forEachIndexed { ctorIdx, ctor ->
+            for (fieldIdx in ctor.fields.indices) {
+                val accessor = Native.getDatatypeSortConstructorAccessor(nCtx, nativeSort, ctorIdx, fieldIdx)
+                if (Native.isEqFuncDecl(nCtx, decl, accessor)) return ctorIdx to fieldIdx
+            }
+        }
+        error("Datatype accessor not found in $sort")
+    }
+
+    open fun convertNativeDatatypeSort(sort: Long): KSort {
+        z3Ctx.datatypes.findDefinitionByNativeSort(sort)?.let { return ctx.mkAdtSort(it) }
+
+        val name = convertNativeSymbol(Native.getSortName(nCtx, sort))
+        return z3Ctx.datatypes.findParametricDefinitionByName(name)?.let {
+            inferParametricAdtInstance(it, sort)
+        } ?: reconstructAdtGroup(sort)
+    }
+
+    private fun inferParametricAdtInstance(definition: KAdtDefinition, sort: Long): KAdtSort? {
+        val unifier = KZ3AdtSortUnifier(ctx, z3Ctx, this, internalizer)
+        val mapping = unifier.mapping
+        if (!unifier.unifyAdtFields(definition, definition.typeParameters, sort)) {
+            return null
+        }
+
+        if (!definition.typeParameters.all { it in mapping }) {
+            throw KSolverUnsupportedFeatureException(
+                "Unable to infer type arguments of the datatype ${definition.name} instance"
+            )
+        }
+
+        val instance = ctx.mkAdtSort(definition, definition.typeParameters.map { mapping.getValue(it) })
+        return instance.takeIf { Native.isEqSort(nCtx, it.internalizedSort(), sort) }
+    }
+
+    private fun reconstructAdtGroup(rootSort: Long): KSort {
+        val groupSorts = mutableListOf<Long>()
+        val visited = hashSetOf<Long>()
+        val queue = ArrayDeque<Long>().apply { add(rootSort) }
+
+        fun isUnknownDatatype(sort: Long): Boolean =
+            Native.getSortKind(nCtx, sort) == Z3_sort_kind.Z3_DATATYPE_SORT.toInt()
+                && z3Ctx.findConvertedSort(sort) == null
+                && z3Ctx.datatypes.findDefinitionByNativeSort(sort) == null
+
+        fun enqueueNested(sort: Long) {
+            when (Z3_sort_kind.fromInt(Native.getSortKind(nCtx, sort))) {
+                Z3_sort_kind.Z3_DATATYPE_SORT -> if (isUnknownDatatype(sort)) queue.add(sort)
+                Z3_sort_kind.Z3_ARRAY_SORT -> {
+                    getArraySortDomain(nCtx, sort).forEach { enqueueNested(it) }
+                    enqueueNested(Native.getArraySortRange(nCtx, sort))
+                }
+
+                else -> {}
+            }
+        }
+
+        while (queue.isNotEmpty()) {
+            val sort = queue.removeFirst()
+            if (!visited.add(Native.getSortId(nCtx, sort).toLong())) continue
+            groupSorts += sort
+            val numCtors = Native.getDatatypeSortNumConstructors(nCtx, sort)
+            for (ctorIdx in 0 until numCtors) {
+                val ctor = Native.getDatatypeSortConstructor(nCtx, sort, ctorIdx)
+                for (fieldIdx in 0 until Native.getDomainSize(nCtx, ctor)) {
+                    enqueueNested(Native.getDomain(nCtx, ctor, fieldIdx))
+                }
+            }
+        }
+
+        val sortIds = groupSorts.map { Native.getSortId(nCtx, it) }
+        lateinit var definitions: List<KAdtDefinition>
+
+        fun convertFieldSort(sort: Long): KSort {
+            val groupIdx = sortIds.indexOf(Native.getSortId(nCtx, sort))
+            if (groupIdx >= 0) return definitions[groupIdx].selfSort
+            return when (Z3_sort_kind.fromInt(Native.getSortKind(nCtx, sort))) {
+                Z3_sort_kind.Z3_ARRAY_SORT -> ctx.mkArrayAnySort(
+                    getArraySortDomain(nCtx, sort).map { convertFieldSort(it) },
+                    convertFieldSort(Native.getArraySortRange(nCtx, sort))
+                )
+
+                else -> sort.convertSort()
+            }
+        }
+
+        definitions = ctx.mkAdtDefinitions {
+            val declared = groupSorts.map { declare(convertNativeSymbol(Native.getSortName(nCtx, it))) }
+            definitions = declared
+            declared.forEachIndexed { idx, definition ->
+                val sort = groupSorts[idx]
+                val ctors = List(Native.getDatatypeSortNumConstructors(nCtx, sort)) { ctorIdx ->
+                    val ctor = Native.getDatatypeSortConstructor(nCtx, sort, ctorIdx)
+                    val fields = List(Native.getDomainSize(nCtx, ctor)) { fieldIdx ->
+                        val accessor = Native.getDatatypeSortConstructorAccessor(nCtx, sort, ctorIdx, fieldIdx)
+                        KAdtCtorFieldDefinition(
+                            convertNativeSymbol(Native.getDeclName(nCtx, accessor)),
+                            convertFieldSort(Native.getDomain(nCtx, ctor, fieldIdx))
+                        )
+                    }
+                    KAdtCtorDefinition(convertNativeSymbol(Native.getDeclName(nCtx, ctor)), fields)
+                }
+                define(definition, ctors)
+            }
+        }
+
+        definitions.forEachIndexed { idx, definition ->
+            z3Ctx.datatypes.registerNativeName(
+                definition,
+                convertNativeSymbol(Native.getSortName(nCtx, groupSorts[idx]))
+            )
+            z3Ctx.datatypes.saveDeclaredSort(definition, groupSorts[idx])
+        }
+
+        return ctx.mkAdtSort(definitions.first())
     }
 
     /**
@@ -413,6 +553,29 @@ open class KZ3ExprConverter(
             }
 
             Z3_decl_kind.Z3_OP_INTERNAL -> tryConvertInternalAppExpr(expr, decl)
+
+            Z3_decl_kind.Z3_OP_DT_CONSTRUCTOR -> expr.convertList { args: List<KExpr<KSort>> ->
+                val sort = Native.getRange(nCtx, decl).convertSort<KAdtSort>()
+                val idx = findDatatypeConstructorIndex(sort, decl)
+                mkAdtConstructorApp(mkAdtConstructorDecl(sort, idx), args)
+            }
+
+            Z3_decl_kind.Z3_OP_DT_ACCESSOR -> expr.convert { value: KExpr<KAdtSort> ->
+                val (ctorIdx, fieldIdx) = findDatatypeAccessorIndex(value.sort, decl)
+                mkAdtSelectorApp(mkAdtSelectorDecl<KSort>(value.sort, ctorIdx, fieldIdx), value)
+            }
+
+            Z3_decl_kind.Z3_OP_DT_IS,
+            Z3_decl_kind.Z3_OP_DT_RECOGNISER -> expr.convert { value: KExpr<KAdtSort> ->
+                val idx = findDatatypeRecognizerIndex(value.sort, decl)
+                mkAdtTesterApp(mkAdtTesterDecl(value.sort, idx), value)
+            }
+
+            Z3_decl_kind.Z3_OP_DT_UPDATE_FIELD -> expr.convert { value: KExpr<KAdtSort>, field: KExpr<KSort> ->
+                val accessor = Native.getDeclFuncDeclParameter(nCtx, decl, 0)
+                val (ctorIdx, fieldIdx) = findDatatypeAccessorIndex(value.sort, accessor)
+                mkAdtUpdateFieldApp(mkAdtUpdateFieldDecl<KSort>(value.sort, ctorIdx, fieldIdx), value, field)
+            }
 
             Z3_decl_kind.Z3_OP_RECURSIVE -> {
                 throw KSolverUnsupportedFeatureException("Recursive decl $declKind is not supported")

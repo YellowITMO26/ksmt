@@ -2,6 +2,7 @@ package io.ksmt.solver
 
 import io.ksmt.solver.KTheory.Array
 import io.ksmt.solver.KTheory.BV
+import io.ksmt.solver.KTheory.DT
 import io.ksmt.solver.KTheory.FP
 import io.ksmt.solver.KTheory.LIA
 import io.ksmt.solver.KTheory.LRA
@@ -14,7 +15,8 @@ import io.ksmt.solver.KTheory.UF
  * */
 enum class KTheory {
     UF, BV, FP, Array,
-    LIA, NIA, LRA, NRA
+    LIA, NIA, LRA, NRA,
+    DT
 }
 
 @Suppress("ComplexMethod", "ComplexCondition")
@@ -53,6 +55,10 @@ fun Set<KTheory>?.smtLib2String(quantifiersAllowed: Boolean = false): String = b
 
     if (FP in theories) {
         append("FP")
+    }
+
+    if (DT in theories) {
+        append("DT")
     }
 
     if (LIA in theories || NIA in theories || LRA in theories || NRA in theories) {

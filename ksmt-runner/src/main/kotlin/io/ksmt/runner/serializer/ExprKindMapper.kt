@@ -165,6 +165,7 @@ import io.ksmt.sort.KIntSort
 import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 
 class ExprKindMapper: KTransformerBase {
 
@@ -634,4 +635,16 @@ class ExprKindMapper: KTransformerBase {
 
     override fun transform(expr: KUninterpretedSortValue): KExpr<KUninterpretedSort> =
         expr.kind(ExprKind.UninterpretedSortValue)
+
+    override fun transform(expr: io.ksmt.expr.KAdtConstructorApp): KExpr<KAdtSort> =
+        expr.kind(ExprKind.AdtConstructorApp)
+
+    override fun <T : KSort> transform(expr: io.ksmt.expr.KAdtSelectorApp<T>): KExpr<T> =
+        expr.kind(ExprKind.AdtSelectorApp)
+
+    override fun transform(expr: io.ksmt.expr.KAdtTesterApp): KExpr<KBoolSort> =
+        expr.kind(ExprKind.AdtTesterApp)
+
+    override fun <T : KSort> transform(expr: io.ksmt.expr.KAdtUpdateFieldApp<T>): KExpr<KAdtSort> =
+        expr.kind(ExprKind.AdtUpdateFieldApp)
 }

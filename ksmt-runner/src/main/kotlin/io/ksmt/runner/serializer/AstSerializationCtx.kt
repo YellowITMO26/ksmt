@@ -9,6 +9,8 @@ import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap
 import io.ksmt.KAst
 import io.ksmt.KContext
 import io.ksmt.solver.util.KExprIntInternalizerBase.Companion.NOT_INTERNALIZED
+import io.ksmt.sort.adt.KAdtDefinition
+import java.util.IdentityHashMap
 
 class AstSerializationCtx {
     private var context: KContext? = null
@@ -20,6 +22,10 @@ class AstSerializationCtx {
     private val deserializedAst = Int2ObjectOpenHashMap<KAst>()
 
     private var nextGeneratedIndex = 1
+
+    private val serializedAdtGroups = IdentityHashMap<KAdtDefinition, Int>()
+    private val deserializedAdtGroups = HashMap<Int, List<KAdtDefinition>>()
+    private var nextAdtGroupIndex = 1
 
     val ctx: KContext
         get() = context ?: error("Serialization context is not initialized")
@@ -33,6 +39,9 @@ class AstSerializationCtx {
         serializedAst.clear()
         deserializedAst.clear()
         nextGeneratedIndex = 1
+        serializedAdtGroups.clear()
+        deserializedAdtGroups.clear()
+        nextAdtGroupIndex = 1
         context = null
     }
 
@@ -63,6 +72,30 @@ class AstSerializationCtx {
     }
 
     fun getAstIndex(ast: KAst): Int = serializedAst.getInt(ast)
+
+    fun getAdtGroupIndex(group: List<KAdtDefinition>): Int =
+        serializedAdtGroups[group.first()] ?: NOT_INTERNALIZED
+
+    fun mkAdtGroupIdx(group: List<KAdtDefinition>): Int {
+        check(group.first() !in serializedAdtGroups) { "Serialization failed: duplicate datatype group" }
+        val idx = nextAdtGroupIndex++
+        saveAdtGroup(idx, group)
+        return idx
+    }
+
+    fun writeAdtGroup(idx: Int, group: List<KAdtDefinition>) {
+        check(idx !in deserializedAdtGroups) { "Serialization failed: different datatype groups with same idx" }
+        saveAdtGroup(idx, group)
+        nextAdtGroupIndex = maxOf(nextAdtGroupIndex, idx + 1)
+    }
+
+    fun getAdtGroupByIndexOrError(idx: Int): List<KAdtDefinition> = deserializedAdtGroups[idx]
+        ?: error("Serialization failed: datatype group $idx is not properly deserialized")
+
+    private fun saveAdtGroup(idx: Int, group: List<KAdtDefinition>) {
+        deserializedAdtGroups[idx] = group
+        serializedAdtGroups[group.first()] = idx
+    }
 
     fun getAstByIndexOrError(idx: Int): KAst = deserializedAst.get(idx)
         ?: error("Serialization failed: $idx is not properly deserialized")

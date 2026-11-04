@@ -15,6 +15,7 @@ import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KSortVisitor
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 
 open class KYicesSortInternalizer(
     private val yicesCtx: KYicesContext
@@ -75,6 +76,10 @@ open class KYicesSortInternalizer(
     }
 
     override fun <S : KFpSort> visit(sort: S) {
+        throw KSolverUnsupportedFeatureException("Unsupported sort $sort")
+    }
+
+    override fun visit(sort: KAdtSort) {
         throw KSolverUnsupportedFeatureException("Unsupported sort $sort")
     }
 
