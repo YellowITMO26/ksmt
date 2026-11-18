@@ -403,7 +403,9 @@ class KCvc5Context(
 
         override fun visit(sort: KFpRoundingModeSort) = Unit
 
-        override fun visit(sort: KAdtSort) = Unit
+        override fun visit(sort: KAdtSort) {
+            sort.args.forEach { it.accept(this) }
+        }
 
         override fun visit(sort: KUninterpretedSort) = cvc5Ctx.addUninterpretedSort(sort)
 

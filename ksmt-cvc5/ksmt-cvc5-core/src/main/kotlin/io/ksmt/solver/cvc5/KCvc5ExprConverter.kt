@@ -1,5 +1,8 @@
 package io.ksmt.solver.cvc5
 
+import io.github.cvc5.Datatype
+import io.github.cvc5.DatatypeConstructor
+import io.github.cvc5.DatatypeSelector
 import io.github.cvc5.Kind
 import io.github.cvc5.RoundingMode
 import io.github.cvc5.Solver
@@ -31,6 +34,10 @@ import io.ksmt.sort.KFpSort
 import io.ksmt.sort.KIntSort
 import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
+import io.ksmt.sort.adt.KAdtCtorDefinition
+import io.ksmt.sort.adt.KAdtCtorFieldDefinition
+import io.ksmt.sort.adt.KAdtDefinition
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.utils.asExpr
 import io.ksmt.utils.uncheckedCast
 
@@ -406,10 +413,10 @@ open class KCvc5ExprConverter(
 
             Kind.EQ_RANGE -> throw KSolverUnsupportedFeatureException("EQ_RANGE is not supported")
 
-            Kind.APPLY_CONSTRUCTOR,
-            Kind.APPLY_SELECTOR,
-            Kind.APPLY_TESTER,
-            Kind.APPLY_UPDATER -> throw KSolverUnsupportedFeatureException("currently ksmt does not support datatypes")
+            Kind.APPLY_CONSTRUCTOR -> convertNativeAdtConstructorApp(expr)
+            Kind.APPLY_SELECTOR -> convertNativeAdtSelectorApp(expr)
+            Kind.APPLY_TESTER -> convertNativeAdtTesterApp(expr)
+            Kind.APPLY_UPDATER -> convertNativeAdtUpdaterApp(expr)
 
             Kind.MATCH,
             Kind.MATCH_CASE,
@@ -651,6 +658,80 @@ open class KCvc5ExprConverter(
         }
     }
 
+    private fun convertNativeAdtConstructorApp(expr: Term): ExprConversionResult = with(ctx) {
+        val children = expr.getChildren()
+        val nativeSort = tm.termSort(expr)
+        val args = children.copyOfRange(fromIndex = 1, toIndex = children.size)
+        expr.convertList(args) { convertedArgs: List<KExpr<KSort>> ->
+            val sort = nativeSort.convertSort<KAdtSort>()
+            val idx = findDatatypeConstructorIndex(nativeSort, children.first()) { ctor, op ->
+                op == tm.registerPointer(ctor.term)
+                    || nativeSort.isInstantiated && op == tm.registerPointer(ctor.getInstantiatedTerm(nativeSort))
+            }
+            mkAdtConstructorApp(mkAdtConstructorDecl(sort, idx), convertedArgs)
+        }
+    }
+
+    private fun convertNativeAdtSelectorApp(expr: Term): ExprConversionResult = with(ctx) {
+        val (selector, value) = expr.getChildren()
+        val nativeSort = tm.termSort(value)
+        expr.convert(arrayOf(value)) { convertedValue: KExpr<KAdtSort> ->
+            val (ctorIdx, fieldIdx) = findDatatypeSelectorIndex(nativeSort, selector) { it.term }
+            mkAdtSelectorApp(mkAdtSelectorDecl<KSort>(convertedValue.sort, ctorIdx, fieldIdx), convertedValue)
+        }
+    }
+
+    private fun convertNativeAdtTesterApp(expr: Term): ExprConversionResult = with(ctx) {
+        val (tester, value) = expr.getChildren()
+        val nativeSort = tm.termSort(value)
+        expr.convert(arrayOf(value)) { convertedValue: KExpr<KAdtSort> ->
+            val idx = findDatatypeConstructorIndex(nativeSort, tester) { ctor, op ->
+                op == tm.registerPointer(ctor.testerTerm)
+            }
+            mkAdtTesterApp(mkAdtTesterDecl(convertedValue.sort, idx), convertedValue)
+        }
+    }
+
+    private fun convertNativeAdtUpdaterApp(expr: Term): ExprConversionResult = with(ctx) {
+        val (updater, value, field) = expr.getChildren()
+        val nativeSort = tm.termSort(value)
+        expr.convert(arrayOf(value, field)) { convertedValue: KExpr<KAdtSort>, convertedField: KExpr<KSort> ->
+            val (ctorIdx, fieldIdx) = findDatatypeSelectorIndex(nativeSort, updater) { it.updaterTerm }
+            mkAdtUpdateFieldApp(
+                mkAdtUpdateFieldDecl<KSort>(convertedValue.sort, ctorIdx, fieldIdx),
+                convertedValue,
+                convertedField
+            )
+        }
+    }
+
+    private inline fun findDatatypeConstructorIndex(
+        sort: Sort,
+        op: Term,
+        matches: (DatatypeConstructor, Term) -> Boolean
+    ): Int {
+        val datatype = tm.sortOp(sort) { datatype }
+        return (0 until datatype.numConstructors).firstOrNull { idx ->
+            matches(tm.registerPointer(datatype.getConstructor(idx)), op)
+        } ?: error("Datatype constructor $op not found in $sort")
+    }
+
+    private inline fun findDatatypeSelectorIndex(
+        sort: Sort,
+        op: Term,
+        nativeOp: (DatatypeSelector) -> Term
+    ): Pair<Int, Int> {
+        val datatype = tm.sortOp(sort) { datatype }
+        for (ctorIdx in 0 until datatype.numConstructors) {
+            val ctor = tm.registerPointer(datatype.getConstructor(ctorIdx))
+            for (fieldIdx in 0 until ctor.numSelectors) {
+                val selector = tm.registerPointer(ctor.getSelector(fieldIdx))
+                if (tm.registerPointer(nativeOp(selector)) == op) return ctorIdx to fieldIdx
+            }
+        }
+        error("Datatype selector $op not found in $sort")
+    }
+
     private fun convertNativeArraySelect(expr: Term): ExprConversionResult {
         val children = expr.getChildren()
         val array = children.first()
@@ -851,9 +932,115 @@ open class KCvc5ExprConverter(
             )
             sort.isUninterpretedSort -> mkUninterpretedSort(sort.symbol)
             sort.isRoundingMode -> mkFpRoundingModeSort()
+            sort.isDatatype && !sort.isTuple -> convertNativeDatatypeSort(sort)
 
             else -> throw KSolverUnsupportedFeatureException("Sort $sort is not supported now")
         }
+    }
+
+    private fun convertNativeDatatypeSort(sort: Sort): KSort {
+        val datatype = tm.sortOp(sort) { datatype }
+        val definition = tm.datatypes.findDefinition(datatype) ?: reconstructAdtGroup(datatype)
+        val args = if (sort.isInstantiated) {
+            sort.instantiatedParameters.map { tm.registerPointer(it).convertSort<KSort>() }
+        } else {
+            emptyList()
+        }
+        return ctx.mkAdtSort(definition, args)
+    }
+
+    private fun reconstructAdtGroup(root: Datatype): KAdtDefinition {
+        val group = mutableListOf<Datatype>()
+        val groupIndices = KCvc5TermMap<Int>()
+        val queue = ArrayDeque<Datatype>().apply { add(root) }
+
+        fun enqueueNested(sort: Sort) {
+            when {
+                sort.isDatatype && !sort.isTuple -> {
+                    val datatype = tm.sortOp(sort) { datatype }
+                    if (tm.datatypes.findDefinition(datatype) == null) queue.add(datatype)
+                    if (sort.isInstantiated) {
+                        sort.instantiatedParameters.forEach { enqueueNested(tm.registerPointer(it)) }
+                    }
+                }
+
+                sort.isArray -> {
+                    enqueueNested(tm.sortOp(sort) { arrayIndexSort })
+                    enqueueNested(tm.sortOp(sort) { arrayElementSort })
+                }
+
+                sort.isTuple -> sort.tupleSorts.forEach { enqueueNested(tm.registerPointer(it)) }
+            }
+        }
+
+        while (queue.isNotEmpty()) {
+            val datatype = queue.removeFirst()
+            if (groupIndices.putIfAbsent(tm.datatypes.datatypeKey(datatype), group.size) != null) continue
+            group += datatype
+            datatype.forEach { ctor ->
+                tm.registerPointer(ctor).forEach { selector ->
+                    tm.registerPointer(selector)
+                    enqueueNested(tm.registerPointer(selector.codomainSort))
+                }
+            }
+        }
+
+        val typeParameters = group.flatMap { datatype ->
+            datatype.parameters.map { tm.registerPointer(it) }
+        }
+        lateinit var definitions: List<KAdtDefinition>
+
+        fun convertFieldSort(sort: Sort): KSort {
+            if (sort in typeParameters) return ctx.mkAdtTypeParameterSort(sort.symbol)
+            return when {
+                sort.isDatatype && !sort.isTuple -> {
+                    val groupIdx = groupIndices[tm.datatypes.datatypeKey(tm.sortOp(sort) { datatype })]
+                        ?: return sort.convertSort()
+                    val args = if (sort.isInstantiated) {
+                        sort.instantiatedParameters.map { convertFieldSort(tm.registerPointer(it)) }
+                    } else {
+                        emptyList()
+                    }
+                    ctx.mkAdtSort(definitions[groupIdx], args)
+                }
+
+                sort.isArray -> mkArrayAnySort(
+                    domain = tm.sortOp(sort) { arrayIndexSort }.let { domain ->
+                        if (domain.isTuple) {
+                            domain.tupleSorts.map { convertFieldSort(tm.registerPointer(it)) }
+                        } else {
+                            listOf(convertFieldSort(domain))
+                        }
+                    },
+                    range = convertFieldSort(tm.sortOp(sort) { arrayElementSort })
+                )
+
+                else -> sort.convertSort()
+            }
+        }
+
+        definitions = ctx.mkAdtDefinitions {
+            val declared = group.map { datatype ->
+                declare(datatype.name, datatype.parameters.map { tm.registerPointer(it).symbol })
+            }
+            definitions = declared
+            declared.forEachIndexed { idx, definition ->
+                val ctors = group[idx].map { ctor ->
+                    val fields = tm.registerPointer(ctor).map { selector ->
+                        tm.registerPointer(selector)
+                        KAdtCtorFieldDefinition(selector.name, convertFieldSort(tm.registerPointer(selector.codomainSort)))
+                    }
+                    KAdtCtorDefinition(ctor.name, fields)
+                }
+                define(definition, ctors)
+            }
+        }
+
+        definitions.forEachIndexed { idx, definition ->
+            tm.datatypes.saveConvertedDefinition(definition, group[idx])
+        }
+
+        return definitions.first()
     }
 
     private fun convertArrayDomainSort(sort: Sort): List<KSort> = if (sort.isTuple) {
