@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Assumptions
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.params.provider.Arguments
 import io.ksmt.KContext
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
 import io.ksmt.expr.KApp
 import io.ksmt.expr.KDivArithExpr
 import io.ksmt.expr.KExpr
@@ -286,6 +288,29 @@ abstract class BenchmarksBasedTest {
 
         override fun <T : KFpSort> transform(expr: KFpMaxExpr<T>): KExpr<T> =
             super.transform(expr).also { checkFpZeroWithDifferentSign(expr.arg0, expr.arg1) }
+
+        override fun <T : KSort> transform(expr: KAdtSelectorApp<T>): KExpr<T> =
+            super.transform(expr).also { checkAdtSelectorOnOtherConstructor(expr) }
+
+        private fun checkAdtSelectorOnOtherConstructor(expr: KAdtSelectorApp<*>) {
+            val value = resolveAdtConstructor(expr.value)
+            if (value == null || value.decl.constructorIndex != expr.decl.constructorIndex) {
+                hasUnderspecifiedOperation = true
+            }
+        }
+
+        private fun resolveAdtConstructor(expr: KExpr<*>): KAdtConstructorApp? = when (expr) {
+            is KAdtConstructorApp -> expr
+            is KAdtSelectorApp<*> -> {
+                val value = resolveAdtConstructor(expr.value)
+                if (value != null && value.decl.constructorIndex == expr.decl.constructorIndex) {
+                    resolveAdtConstructor(value.args[expr.decl.fieldIndex])
+                } else {
+                    null
+                }
+            }
+            else -> null
+        }
 
         private fun checkDivisionByZero(divisor: KExpr<*>) = with(ctx) {
             if (divisor == 0.expr) {

@@ -140,7 +140,11 @@ open class KZ3SortInternalizer(
         groupInProgress = definition.group.toSet()
         groupLocalSorts.clear()
         try {
-            definition.group.forEach { declareAdt(it) }
+            if (definition.group.any { it.isParametric }) {
+                definition.group.forEach { declareAdt(it) }
+            } else {
+                declareMonomorphicAdtGroup(definition.group)
+            }
         } finally {
             groupLocalSorts.values.forEach { decRefUnsafe(nCtx, it) }
             groupLocalSorts.clear()
@@ -149,8 +153,36 @@ open class KZ3SortInternalizer(
         }
     }
 
+    private fun declareMonomorphicAdtGroup(group: List<KAdtDefinition>) {
+        val groupSorts = group.map { it.selfSort }
+        val constructors = group.map { definition ->
+            definition.constructors.map { mkNativeConstructor(it) { sort -> groupSorts.indexOf(sort) } }.toLongArray()
+        }
+        val constructorLists = LongArray(group.size) {
+            Native.mkConstructorList(nCtx, constructors[it].size, constructors[it])
+        }
+        try {
+            val names = LongArray(group.size) { Native.mkStringSymbol(nCtx, datatypes.nativeName(group[it])) }
+            val sorts = LongArray(group.size)
+            Native.mkDatatypes(nCtx, group.size, names, sorts, constructorLists)
+            group.forEachIndexed { idx, definition -> datatypes.saveDeclaredSort(definition, sorts[idx]) }
+        } finally {
+            constructorLists.forEach { Native.delConstructorList(nCtx, it) }
+            constructors.forEach { ctors -> ctors.forEach { Native.delConstructor(nCtx, it) } }
+        }
+    }
+
     private fun declareAdt(definition: KAdtDefinition) {
-        val constructors = definition.constructors.map { mkNativeConstructor(definition, it) }.toLongArray()
+        val selfSort = definition.selfSort
+        val constructors = definition.constructors.map { ctor ->
+            mkNativeConstructor(ctor) { sort ->
+                if (sort == selfSort) {
+                    0
+                } else {
+                    -1
+                }
+            }
+        }.toLongArray()
         try {
             val params = LongArray(definition.typeParameters.size) {
                 internalizeZ3Sort(definition.typeParameters[it])
@@ -167,14 +199,14 @@ open class KZ3SortInternalizer(
         }
     }
 
-    private fun mkNativeConstructor(definition: KAdtDefinition, ctor: KAdtCtorDefinition): Long {
+    private fun mkNativeConstructor(ctor: KAdtCtorDefinition, groupIndex: (KSort) -> Int): Long {
         val fieldNames = LongArray(ctor.fields.size) { Native.mkStringSymbol(nCtx, ctor.fields[it].name) }
+        val refs = IntArray(ctor.fields.size) { groupIndex(ctor.fields[it].sort) }
         val fieldSorts = LongArray(ctor.fields.size) {
-            val sort = ctor.fields[it].sort
-            if (sort == definition.selfSort) {
+            if (refs[it] >= 0) {
                 0L
             } else {
-                internalizeZ3Sort(sort)
+                internalizeZ3Sort(ctor.fields[it].sort)
             }
         }
         return Native.mkConstructor(
@@ -184,7 +216,7 @@ open class KZ3SortInternalizer(
             ctor.fields.size,
             fieldNames,
             fieldSorts,
-            IntArray(ctor.fields.size)
+            IntArray(ctor.fields.size) { maxOf(refs[it], 0) }
         )
     }
 
