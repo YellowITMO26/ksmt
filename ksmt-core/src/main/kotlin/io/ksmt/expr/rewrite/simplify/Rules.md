@@ -52,6 +52,26 @@ Note: todo -- additional simplification rules implemented in Z3
    * ``(= a (not a)) ==> false``
    * todo: bool_rewriter.cpp:700
 
+### Adt
+
+1. KAdtConstructorApp
+   * ``(C (sel_1 x) .. (sel_n x)) ==> x``, C is the only constructor of the sort and every argument is the `i`-th selector of `C` applied to the same `x`
+2. KAdtSelectorApp
+   * ``(sel_i (C a1 .. an)) ==> ai``, sel_i is a selector of C (foreign selector is unspecified ==> untouched)
+   * ``(sel_i ((_ update-field s_i v) x)) ==> v``, single-constructor sort
+3. KAdtTesterApp
+   * ``(_ is C) x ==> true``, C is the only constructor of the sort
+   * ``(_ is C) (C' a1 .. ak) ==> true / false``
+   * ``(_ is C) ((_ update-field s) v x) ==> (_ is C) x``
+4. KAdtUpdateFieldApp
+   * ``((_ update-field s_i v) (C a1 .. an)) ==> (C a1 .. v .. an)``, s_i is a selector of C
+   * ``((_ update-field s_i v) (C' a1 .. an)) ==> (C' a1 .. an)``, C' is not the constructor of s_i
+5. KEqExpr(KAdt, KAdt)
+   * ``(= (C a1 .. an) (C' b1 .. bn)) ==> false``, C != C' (also through constructor-only paths)
+   * ``(= (C a1 .. an) (C b1 .. bn)) ==> (and (= a1 b1) .. (= an bn))``
+6. KDistinctExpr(KAdt)
+   * definitely distinct check: constructor clash at the top or at any constructor-only path
+
 ### Array
 
 1. KEqExpr(KArray, KArray)
