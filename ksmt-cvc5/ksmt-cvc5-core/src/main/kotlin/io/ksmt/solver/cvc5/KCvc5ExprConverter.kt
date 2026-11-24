@@ -1037,6 +1037,7 @@ open class KCvc5ExprConverter(
         }
 
         definitions.forEachIndexed { idx, definition ->
+            tm.datatypes.registerNativeName(definition, group[idx].name)
             tm.datatypes.saveConvertedDefinition(definition, group[idx])
         }
 

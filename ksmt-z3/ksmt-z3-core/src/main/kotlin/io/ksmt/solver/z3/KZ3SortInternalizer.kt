@@ -3,6 +3,7 @@ package io.ksmt.solver.z3
 import com.microsoft.z3.Native
 import com.microsoft.z3.decRefUnsafe
 import com.microsoft.z3.incRefUnsafe
+import io.ksmt.solver.KSolverUnsupportedFeatureException
 import io.ksmt.solver.util.KExprLongInternalizerBase.Companion.NOT_INTERNALIZED
 import io.ksmt.sort.adt.KAdtCtorDefinition
 import io.ksmt.sort.adt.KAdtDefinition
@@ -120,6 +121,7 @@ open class KZ3SortInternalizer(
             declareAdtGroup(definition)
         }
         internalizedSort = if (definition.isParametric || definition in groupInProgress) {
+            checkForwardReferenceSupported(definition)
             val args = LongArray(sort.args.size) { internalizeZ3Sort(sort.args[it]) }
             val name = Native.mkStringSymbol(nCtx, datatypes.nativeName(definition))
             Native.mkDatatypeSort(nCtx, name, args.size, args)
@@ -172,17 +174,25 @@ open class KZ3SortInternalizer(
         }
     }
 
+    private var declaringDefinition: KAdtDefinition? = null
+
     private fun declareAdt(definition: KAdtDefinition) {
         val selfSort = definition.selfSort
-        val constructors = definition.constructors.map { ctor ->
-            mkNativeConstructor(ctor) { sort ->
-                if (sort == selfSort) {
-                    0
-                } else {
-                    -1
+        val previousDeclaring = declaringDefinition
+        declaringDefinition = definition
+        val constructors = try {
+            definition.constructors.map { ctor ->
+                mkNativeConstructor(ctor) { sort ->
+                    if (sort == selfSort) {
+                        0
+                    } else {
+                        -1
+                    }
                 }
-            }
-        }.toLongArray()
+            }.toLongArray()
+        } finally {
+            declaringDefinition = previousDeclaring
+        }
         try {
             val params = LongArray(definition.typeParameters.size) {
                 internalizeZ3Sort(definition.typeParameters[it])
@@ -232,6 +242,16 @@ open class KZ3SortInternalizer(
         return z3Ctx.internalizeSort(sort) {
             sort.accept(this@KZ3SortInternalizer)
             internalizedSort
+        }
+    }
+
+    private fun checkForwardReferenceSupported(definition: KAdtDefinition) {
+        val declaring = declaringDefinition
+        if (definition in groupInProgress && definition.isParametric && declaring != null && !declaring.isParametric) {
+            throw KSolverUnsupportedFeatureException(
+                "Datatype ${declaring.name} references parametric datatype ${definition.name} " +
+                    "from the same mutually recursive group: this is not supported in Z3"
+            )
         }
     }
 }

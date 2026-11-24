@@ -107,7 +107,7 @@ open class KCvc5SortInternalizer(
         val args = sort.args.map { it.internalizeCvc5Sort() }.toTypedArray()
 
         val template = if (definition in groupInProgress) {
-            tm.builder { mkUnresolvedDatatypeSort(definition.name, args.size) }
+            tm.builder { mkUnresolvedDatatypeSort(datatypes.nativeName(definition), args.size) }
         } else {
             declareAdtGroup(definition)
             datatypes.findDeclaredSort(definition) ?: error("Datatype ${definition.name} is not declared")
@@ -147,10 +147,11 @@ open class KCvc5SortInternalizer(
 
     private fun mkDatatypeDecl(definition: KAdtDefinition): DatatypeDecl {
         val params = definition.typeParameters.map { it.internalizeCvc5Sort() }.toTypedArray()
+        val name = datatypes.nativeName(definition)
         val decl = if (params.isEmpty()) {
-            tm.builder { mkDatatypeDecl(definition.name) }
+            tm.builder { mkDatatypeDecl(name) }
         } else {
-            tm.builder { mkDatatypeDecl(definition.name, params) }
+            tm.builder { mkDatatypeDecl(name, params) }
         }
         definition.constructors.forEach { decl.addConstructor(mkConstructorDecl(it)) }
         return decl

@@ -12,6 +12,23 @@ class KCvc5DatatypeRegistry internal constructor(private val tm: KCvc5TermManage
     private val convertedDefinitions = IdentityHashMap<KAdtDefinition, Datatype>()
     private val definitions = KCvc5TermMap<KAdtDefinition>()
     private val typeParameters = hashMapOf<String, Sort>()
+    private val nativeNames = IdentityHashMap<KAdtDefinition, String>()
+    private val usedNativeNames = hashSetOf<String>()
+
+    fun nativeName(definition: KAdtDefinition): String = nativeNames.getOrPut(definition) {
+        var name = definition.name
+        var idx = 0
+        while (!usedNativeNames.add(name)) {
+            name = "${definition.name}!${idx++}"
+        }
+        name
+    }
+
+    fun registerNativeName(definition: KAdtDefinition, name: String) {
+        if (nativeNames.putIfAbsent(definition, name) == null) {
+            usedNativeNames.add(name)
+        }
+    }
 
     fun typeParameter(name: String): Sort = typeParameters.getOrPut(name) {
         tm.builder { mkParamSort(name) }

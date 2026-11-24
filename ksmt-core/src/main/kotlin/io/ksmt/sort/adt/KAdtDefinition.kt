@@ -32,6 +32,9 @@ class KAdtDefinition internal constructor(
     val isDefined: Boolean
         get() = definedConstructors != null
 
+    val isFinalized: Boolean
+        get() = definitionGroup != null
+
     val isParametric: Boolean
         get() = typeParameters.isNotEmpty()
 
@@ -50,6 +53,13 @@ class KAdtDefinition internal constructor(
     internal fun defineConstructors(constructors: List<KAdtCtorDefinition>) {
         check(definedConstructors == null) { "Constructors of datatype $name are already defined" }
         require(constructors.isNotEmpty()) { "Datatype $name must have at least one constructor" }
+        val symbols = constructors.flatMap { ctor ->
+            sequenceOf(ctor.name, ctor.testerName) + ctor.fields.map { it.name }
+        }
+        val duplicated = symbols.groupBy { it }.filterValues { it.size > 1 }.keys
+        require(duplicated.isEmpty()) {
+            "Datatype $name has duplicate constructor, tester or selector names: $duplicated"
+        }
         definedConstructors = constructors
     }
 
@@ -115,7 +125,12 @@ class KAdtDefinition internal constructor(
         override fun <R : KSort> visit(sort: KArrayNSort<R>): Boolean = sort.range.accept(this)
 
         override fun visit(sort: KAdtSort): Boolean {
-            val definitionInhabited = sort.definition !in groupDefinitions || sort.definition in inhabited
+            val definition = sort.definition
+            val definitionInhabited = if (definition in groupDefinitions) {
+                definition in inhabited
+            } else {
+                definition.isFinalized && computeWellFoundedConstructors(definition.group)[definition] != null
+            }
             return definitionInhabited && sort.args.all { it.accept(this) }
         }
     }
@@ -160,6 +175,8 @@ class KAdtDefinitionsBuilder internal constructor(val ctx: KContext) {
         group.forEach {
             check(it.isDefined) { "Datatype ${it.name} was declared but not defined" }
         }
+        val duplicated = group.groupBy { it.name }.filterValues { it.size > 1 }.keys
+        require(duplicated.isEmpty()) { "Duplicate datatype names in group: $duplicated" }
         group.forEach { it.finalize(group) }
         return group
     }
