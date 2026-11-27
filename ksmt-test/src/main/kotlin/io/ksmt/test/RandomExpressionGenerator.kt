@@ -5,6 +5,8 @@ import io.ksmt.KContext
 import io.ksmt.expr.KExpr
 import io.ksmt.expr.KFpRoundingMode
 import io.ksmt.expr.KInterpretedValue
+import io.ksmt.sort.adt.KAdtDefinition
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.sort.KArray2Sort
 import io.ksmt.sort.KArray3Sort
 import io.ksmt.sort.KArrayNSort
@@ -13,7 +15,6 @@ import io.ksmt.sort.KArraySortBase
 import io.ksmt.sort.KBoolSort
 import io.ksmt.sort.KBvSort
 import io.ksmt.sort.KFp128Sort
-import io.ksmt.sort.KFp64Sort
 import io.ksmt.sort.KFpRoundingModeSort
 import io.ksmt.sort.KFpSort
 import io.ksmt.sort.KIntSort
@@ -98,7 +99,7 @@ class RandomExpressionGenerator {
 
         generateInitialSeed(samplesPerSort = params.seedExpressionsPerSort)
 
-        val filteredGenerators = generators.filter { generatorFilter(it.function) }
+        val filteredGenerators = (generators + adtGenerators).filter { generatorFilter(it.function) }
 
         while (generationContext.expressions.size < limit) {
             val generator = filteredGenerators.random(random)
@@ -124,7 +125,7 @@ class RandomExpressionGenerator {
         )
 
         for (entry in generationContext.trace) {
-            val resolvedEntry = resolveTraceEntry(entry, replayContext)
+            val resolvedEntry = entry.withArgs(entry.args.map { resolveArgument(it, replayContext) })
             val result = resolvedEntry.call(context)
             when (result) {
                 // We don't care about expression depth since it is unused during replay
@@ -134,14 +135,6 @@ class RandomExpressionGenerator {
         }
 
         return replayContext.expressions
-    }
-
-    private fun resolveTraceEntry(
-        entry: FunctionInvocation,
-        replayContext: GenerationContext
-    ): FunctionInvocation {
-        val args = entry.args.map { resolveArgument(it, replayContext) }
-        return FunctionInvocation(entry.function, args)
     }
 
     private fun resolveArgument(argument: Argument, replayContext: GenerationContext): Argument =
@@ -160,6 +153,7 @@ class RandomExpressionGenerator {
                 nullIfGenerationFailed { sortGenerator.mkSeed(generationContext) }
             }
         }
+        generateAdtSeed(samplesPerSort)
         for (sortGenerator in complexGenerators) {
             repeat(samplesPerSort) {
                 nullIfGenerationFailed { sortGenerator.mkSeed(generationContext) }
@@ -167,9 +161,170 @@ class RandomExpressionGenerator {
         }
     }
 
+    private fun generateAdtSeed(samplesPerSort: Int) {
+        val ctx = generationContext.context
+        val sortArgs = listOf(ctx.intSort, ctx.boolSort).mapNotNull { sort ->
+            generationContext.registeredSorts[sort]?.let { SortArgument(sort, it) }
+        }
+
+        val adtSorts = mutableListOf<SortArgument>()
+        nullIfGenerationFailed { adtSorts += mkAdtSort(ADT_COLOR, emptyList()) }
+        nullIfGenerationFailed { adtSorts += mkAdtSort(ADT_TREE, emptyList()) }
+        nullIfGenerationFailed { adtSorts += mkAdtSort(ADT_FOREST, emptyList()) }
+        for (arg in sortArgs + adtSorts.take(1)) {
+            nullIfGenerationFailed { adtSorts += mkAdtSort(ADT_LIST, listOf(arg)) }
+        }
+        val pairSecond = adtSorts.firstOrNull()
+        if (pairSecond != null) {
+            for (arg in sortArgs.take(1)) {
+                nullIfGenerationFailed { adtSorts += mkAdtSort(ADT_PAIR, listOf(arg, pairSecond)) }
+            }
+        }
+
+        for (sort in adtSorts) {
+            repeat(samplesPerSort) {
+                nullIfGenerationFailed {
+                    AstGenerator<ExprArgument>(
+                        constGen.function,
+                        emptyMap(),
+                        listOf(SimpleProvider(String::class), FixedArgumentProvider(sort))
+                    ).generate(generationContext)
+                }
+            }
+        }
+    }
+
+    private fun mkAdtSort(definitionName: String, args: List<SortArgument>): SortArgument {
+        val invocation = AdtSortInvocation(listOf(SimpleArgument(definitionName), ListArgument(args)))
+        return generationContext.invokeAndRegister(invocation).uncheckedCast()
+    }
+
     companion object {
 
         val noFreshConstants: (KFunction<*>) -> Boolean = {  it != freshConstGen }
+
+        private const val ADT_COLOR = "Color"
+        private const val ADT_LIST = "List"
+        private const val ADT_PAIR = "Pair"
+        private const val ADT_TREE = "Tree"
+        private const val ADT_FOREST = "Forest"
+
+        /**
+         * Upper bound for the width of a generated bit-vector result.
+         * Concat chains in deep expressions grow the width exponentially,
+         * which leads to enormous BigInteger computations and memory usage.
+         * */
+        private const val MAX_GENERATED_BV_WIDTH = 1024L
+
+        private val adtDefinitionsCache = java.util.WeakHashMap<KContext, Map<String, KAdtDefinition>>()
+
+        private fun adtDefinitions(ctx: KContext): Map<String, KAdtDefinition> = synchronized(adtDefinitionsCache) {
+            adtDefinitionsCache.getOrPut(ctx) {
+                with(ctx) {
+                    val color = mkAdtDefinition(ADT_COLOR) {
+                        addConstructor("red")
+                        addConstructor("green")
+                        addConstructor("blue")
+                    }
+                    val list = mkAdtDefinition(ADT_LIST, listOf("T")) {
+                        addConstructor("nil")
+                        addConstructor("cons", "head" to definition.typeParameters.single(), "tail" to selfSort)
+                    }
+                    val pair = mkAdtDefinition(ADT_PAIR, listOf("A", "B")) {
+                        val (a, b) = definition.typeParameters
+                        addConstructor("mk-pair", "first" to a, "second" to b)
+                    }
+                    val (tree, forest) = mkAdtDefinitions {
+                        val tree = declare(ADT_TREE)
+                        val forest = declare(ADT_FOREST)
+                        tree.define {
+                            addConstructor("leaf", "value" to intSort)
+                            addConstructor("node", "label" to boolSort, "children" to forest.selfSort)
+                        }
+                        forest.define {
+                            addConstructor("empty")
+                            addConstructor("insert", "first-tree" to tree.selfSort, "rest" to selfSort)
+                        }
+                    }
+                    listOf(color, list, pair, tree, forest).associateBy { it.name }
+                }
+            }
+        }
+
+        private enum class AdtOperation {
+            Constructor, Selector, Tester, UpdateField
+        }
+
+        private val adtGenerators: List<ExprGenerator> by lazy {
+            listOf(
+                AdtOperation.Constructor to "mkAdtConstructorApp",
+                AdtOperation.Selector to "mkAdtSelectorApp",
+                AdtOperation.Tester to "mkAdtTesterApp",
+                AdtOperation.UpdateField to "mkAdtUpdateFieldApp"
+            ).map { (operation, name) ->
+                AdtExprGenerator(operation, ctxFunctions.first { it.name == name })
+            }
+        }
+
+        private interface ExprGenerator {
+            val function: KFunction<*>
+            fun generate(generationContext: GenerationContext): Argument
+        }
+
+        private class AdtExprGenerator(
+            val operation: AdtOperation,
+            override val function: KFunction<*>
+        ) : ExprGenerator {
+            override fun generate(generationContext: GenerationContext): Argument {
+                val adtSortIds = generationContext.sortIndex[KAdtSort::class.java]
+                    ?: generationFailed("No datatype sorts")
+                val sortIdx = adtSortIds.random(generationContext.random)
+                val sort = generationContext.sorts[sortIdx] as KAdtSort
+                val sortArg = SortArgument(sort, sortIdx)
+
+                val constructorIdx = sort.definition.constructors.indices.random(generationContext.random)
+                val fieldSorts = sort.fieldSorts(constructorIdx)
+
+                val args = when (operation) {
+                    AdtOperation.Constructor -> listOf(
+                        sortArg,
+                        SimpleArgument(constructorIdx),
+                        ListArgument(fieldSorts.map { pickExpr(generationContext, it) })
+                    )
+
+                    AdtOperation.Tester -> listOf(
+                        sortArg,
+                        SimpleArgument(constructorIdx),
+                        pickExpr(generationContext, sort)
+                    )
+
+                    AdtOperation.Selector, AdtOperation.UpdateField -> {
+                        if (fieldSorts.isEmpty()) generationFailed("Constructor has no fields")
+                        val fieldIdx = fieldSorts.indices.random(generationContext.random)
+                        val baseArgs = listOf(
+                            sortArg,
+                            SimpleArgument(constructorIdx),
+                            SimpleArgument(fieldIdx),
+                            pickExpr(generationContext, sort)
+                        )
+                        if (operation == AdtOperation.Selector) {
+                            baseArgs
+                        } else {
+                            baseArgs + pickExpr(generationContext, fieldSorts[fieldIdx])
+                        }
+                    }
+                }
+
+                return generationContext.invokeAndRegister(AdtExprInvocation(operation, args))
+            }
+
+            private fun pickExpr(generationContext: GenerationContext, sort: KSort): ExprArgument {
+                val candidates = generationContext.expressionIndex[sort]
+                    ?: generationFailed("No expressions for sort $sort")
+                val (exprId, exprDepth) = selectRandomExpressionId(generationContext, candidates)
+                return ExprArgument(generationContext.expressions[exprId], exprId, exprDepth)
+            }
+        }
 
         private val ctxFunctions by lazy {
             KContext::class.members
@@ -195,6 +350,7 @@ class RandomExpressionGenerator {
             ctxFunctions
                 .asSequence()
                 .filter { it.returnType.isKSort() }
+                .filterNot { it.name == "mkAdtTypeParameterSort" }
                 .map { it.uncheckedCast<KFunction<*>, KFunction<KSort>>() }
                 .mapNotNull {
                     nullIfGenerationFailed {
@@ -287,6 +443,15 @@ class RandomExpressionGenerator {
                         SimpleArgument(((args[0] as SimpleArgument).value as Int) % 3 + 1),
                         args[1]
                     )
+
+                    /** Reject concats exceeding [MAX_GENERATED_BV_WIDTH]. */
+                    "mkBvConcatExpr", "mkBvConcatExprNoSimplify" -> {
+                        val width = args.sumOf { ((it as ExprArgument).value.sort as KBvSort).sizeBits.toLong() }
+                        if (width > MAX_GENERATED_BV_WIDTH) {
+                            generationFailed("Concat result width $width exceeds $MAX_GENERATED_BV_WIDTH bits")
+                        }
+                        args
+                    }
 
                     "mkFpRemExpr" -> {
                         val argSort = (args[0] as? ExprArgument)?.value?.sort as? KFpSort
@@ -453,6 +618,15 @@ class RandomExpressionGenerator {
 
             override fun <R : KSort> visit(sort: KArrayNSort<R>): AstGenerator<ExprArgument> =
                 generateArray(sort)
+
+            override fun visit(sort: KAdtSort): AstGenerator<ExprArgument> =
+                AstGenerator(
+                    constGen.function,
+                    constGen.refSortProviders,
+                    listOf(SimpleProvider(String::class))
+                ) { args ->
+                    args + sortArgument
+                }
         }
 
         sealed interface Argument {
@@ -465,7 +639,7 @@ class RandomExpressionGenerator {
                 get() = nested.map { it.value }
 
             override val depth: Int
-                get() = nested.maxOf { it.depth }
+                get() = nested.maxOfOrNull { it.depth } ?: 0
         }
 
         class SimpleArgument(override val value: Any) : Argument {
@@ -521,6 +695,11 @@ class RandomExpressionGenerator {
             }
         }
 
+        private class FixedArgumentProvider(val argument: Argument) : ArgumentProvider {
+            override fun provide(generationContext: GenerationContext, references: Map<String, SortArgument>): Argument =
+                argument
+        }
+
         private class SimpleProvider(val type: KClass<*>) : ArgumentProvider {
             override fun provide(generationContext: GenerationContext, references: Map<String, SortArgument>): Argument {
                 val value = type.generateSimpleValue(generationContext)
@@ -570,15 +749,17 @@ class RandomExpressionGenerator {
         }
 
         private class AstGenerator<T : Argument>(
-            val function: KFunction<*>,
+            override val function: KFunction<*>,
             val refSortProviders: Map<String, SortProvider>,
             val argProviders: List<ArgumentProvider>,
             val provideArguments: (List<Argument>) -> List<Argument> = { it }
-        ) : ArgumentProvider {
+        ) : ArgumentProvider, ExprGenerator {
             override fun provide(generationContext: GenerationContext, references: Map<String, SortArgument>): Argument =
                 generate(generationContext, references)
 
-            fun generate(generationContext: GenerationContext, context: Map<String, SortArgument> = emptyMap()): T {
+            override fun generate(generationContext: GenerationContext): T = generate(generationContext, emptyMap())
+
+            fun generate(generationContext: GenerationContext, context: Map<String, SortArgument>): T {
                 val resolvedRefProviders = refSortProviders.mapValues {
                     it.value.resolve(generationContext, context)
                 }
@@ -588,40 +769,44 @@ class RandomExpressionGenerator {
                 val arguments = provideArguments(baseArguments)
 
                 val invocation = FunctionInvocation(function, arguments)
+                return generationContext.invokeAndRegister(invocation).uncheckedCast()
+            }
+        }
 
-                val ast = try {
-                    invocation.call(generationContext.context)
-                } catch (ex: Throwable) {
-                    throw GenerationFailedException("Generator failed", ex)
-                }
-
-                if (ast is KExpr<*>) {
-                    if (!ast.isCorrect()) {
-                        generationFailed("Incorrect ast generated")
-                    }
-                    val depth = (arguments.maxOfOrNull { it.depth } ?: 0) + 1
-                    val idx = generationContext.registerExpr(ast, depth)
-                    generationContext.trace += invocation
-                    return ExprArgument(ast, idx, depth).uncheckedCast()
-                }
-
-                if (ast is KSort) {
-                    var idx = generationContext.registerSort(ast)
-                    if (idx == -1) {
-                        idx = generationContext.findSortIdx(ast)
-                    }
-                    generationContext.trace += invocation
-                    return SortArgument(ast, idx).uncheckedCast()
-                }
-
-                generationFailed("Unexpected generation result: $ast")
+        private fun GenerationContext.invokeAndRegister(invocation: Invocation): Argument {
+            val arguments = invocation.args
+            val ast = try {
+                invocation.call(context)
+            } catch (ex: Throwable) {
+                throw GenerationFailedException("Generator failed", ex)
             }
 
-            private fun KExpr<*>.isCorrect(): Boolean {
-                val sort = sort
-                if (sort is KBvSort && sort.sizeBits == 0u) return false
-                return true
+            if (ast is KExpr<*>) {
+                if (!ast.isCorrect()) {
+                    generationFailed("Incorrect ast generated")
+                }
+                val depth = (arguments.maxOfOrNull { it.depth } ?: 0) + 1
+                val idx = registerExpr(ast, depth)
+                trace += invocation
+                return ExprArgument(ast, idx, depth)
             }
+
+            if (ast is KSort) {
+                var idx = registerSort(ast)
+                if (idx == -1) {
+                    idx = findSortIdx(ast)
+                }
+                trace += invocation
+                return SortArgument(ast, idx)
+            }
+
+            generationFailed("Unexpected generation result: $ast")
+        }
+
+        private fun KExpr<*>.isCorrect(): Boolean {
+            val sort = sort
+            if (sort is KBvSort && sort.sizeBits == 0u) return false
+            return true
         }
 
         private fun AstGenerator<SortArgument>.mkSeed(
@@ -679,14 +864,66 @@ class RandomExpressionGenerator {
             return context.generator(this)
         }
 
+        private sealed interface Invocation {
+            val args: List<Argument>
+            fun call(ctx: KContext): Any?
+            fun withArgs(args: List<Argument>): Invocation
+        }
+
         private class FunctionInvocation(
             val function: KFunction<*>,
-            val args: List<Argument>
-        ) {
-            fun call(ctx: KContext): Any? {
+            override val args: List<Argument>
+        ) : Invocation {
+            override fun call(ctx: KContext): Any? {
                 val argumentValues = args.map { it.value }
                 return function.call(ctx, *argumentValues.toTypedArray())
             }
+
+            override fun withArgs(args: List<Argument>): Invocation = FunctionInvocation(function, args)
+        }
+
+        private class AdtSortInvocation(override val args: List<Argument>) : Invocation {
+            override fun call(ctx: KContext): Any {
+                val definition = adtDefinitions(ctx).getValue(args[0].value as String)
+                val typeArgs = (args[1] as ListArgument).nested.map { it.value as KSort }
+                return ctx.mkAdtSort(definition, typeArgs)
+            }
+
+            override fun withArgs(args: List<Argument>): Invocation = AdtSortInvocation(args)
+        }
+
+        private class AdtExprInvocation(
+            val operation: AdtOperation,
+            override val args: List<Argument>
+        ) : Invocation {
+            override fun call(ctx: KContext): Any = with(ctx) {
+                val sort = args[0].value as KAdtSort
+                val constructorIdx = args[1].value as Int
+                when (operation) {
+                    AdtOperation.Constructor -> mkAdtConstructorApp(
+                        mkAdtConstructorDecl(sort, constructorIdx),
+                        (args[2] as ListArgument).nested.map { it.value as KExpr<*> }
+                    )
+
+                    AdtOperation.Tester -> mkAdtTesterApp(
+                        mkAdtTesterDecl(sort, constructorIdx),
+                        args[2].value.uncheckedCast()
+                    )
+
+                    AdtOperation.Selector -> mkAdtSelectorApp(
+                        mkAdtSelectorDecl<KSort>(sort, constructorIdx, args[2].value as Int),
+                        args[3].value.uncheckedCast()
+                    )
+
+                    AdtOperation.UpdateField -> mkAdtUpdateFieldApp(
+                        mkAdtUpdateFieldDecl<KSort>(sort, constructorIdx, args[2].value as Int),
+                        args[3].value.uncheckedCast(),
+                        args[4].value.uncheckedCast()
+                    )
+                }
+            }
+
+            override fun withArgs(args: List<Argument>): Invocation = AdtExprInvocation(operation, args)
         }
 
         private class GenerationContext(
@@ -702,7 +939,7 @@ class RandomExpressionGenerator {
             val expressionIndex = hashMapOf<KSort, SortedMap<Int, MutableList<Int>>>()
             val constantIndex = hashMapOf<KSort, MutableList<Int>>()
             val sortIndex = hashMapOf<Class<*>, MutableList<Int>>()
-            val trace = ArrayList<FunctionInvocation>(expressionsAmountEstimation + sortsAmountEstimation)
+            val trace = ArrayList<Invocation>(expressionsAmountEstimation + sortsAmountEstimation)
 
             fun registerSort(sort: KSort, inReplayMode: Boolean = false): Int {
                 val knownSortId = registeredSorts[sort]

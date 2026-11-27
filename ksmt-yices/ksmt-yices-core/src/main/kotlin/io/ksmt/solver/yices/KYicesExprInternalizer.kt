@@ -178,6 +178,7 @@ import io.ksmt.sort.KIntSort
 import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 import java.math.BigInteger
 
 @Suppress("LargeClass")
@@ -954,6 +955,18 @@ open class KYicesExprInternalizer(
             yicesCtx.forall(vars, body)
         }
     }
+
+    override fun transform(expr: io.ksmt.expr.KAdtConstructorApp): KExpr<KAdtSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in Yices")
+
+    override fun <T : KSort> transform(expr: io.ksmt.expr.KAdtSelectorApp<T>): KExpr<T> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in Yices")
+
+    override fun transform(expr: io.ksmt.expr.KAdtTesterApp): KExpr<KBoolSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in Yices")
+
+    override fun <T : KSort> transform(expr: io.ksmt.expr.KAdtUpdateFieldApp<T>): KExpr<KAdtSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in Yices")
 
     override fun transform(expr: KUninterpretedSortValue): KExpr<KUninterpretedSort> = with(expr) {
         transform {

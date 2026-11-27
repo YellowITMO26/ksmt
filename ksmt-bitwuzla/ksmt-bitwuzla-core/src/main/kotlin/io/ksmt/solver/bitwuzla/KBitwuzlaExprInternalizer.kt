@@ -5,6 +5,10 @@ import io.ksmt.decl.KDecl
 import io.ksmt.decl.KDeclVisitor
 import io.ksmt.decl.KFuncDecl
 import io.ksmt.expr.KAddArithExpr
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
 import io.ksmt.expr.KAndBinaryExpr
 import io.ksmt.expr.KAndExpr
 import io.ksmt.expr.KArray2Lambda
@@ -151,8 +155,6 @@ import io.ksmt.expr.KUnaryMinusArithExpr
 import io.ksmt.expr.KUninterpretedSortValue
 import io.ksmt.expr.KUniversalQuantifier
 import io.ksmt.expr.KXorExpr
-import io.ksmt.expr.rewrite.simplify.rewriteBvAddNoUnderflowExpr
-import io.ksmt.expr.rewrite.simplify.rewriteBvMulNoUnderflowExpr
 import io.ksmt.expr.rewrite.simplify.rewriteBvNegNoOverflowExpr
 import io.ksmt.expr.rewrite.simplify.rewriteBvSubNoUnderflowExpr
 import io.ksmt.solver.KSolverUnsupportedFeatureException
@@ -163,6 +165,7 @@ import org.ksmt.solver.bitwuzla.bindings.BitwuzlaSort
 import org.ksmt.solver.bitwuzla.bindings.BitwuzlaTerm
 import org.ksmt.solver.bitwuzla.bindings.Native
 import io.ksmt.solver.util.KExprLongInternalizerBase
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.sort.KArithSort
 import io.ksmt.sort.KArray2Sort
 import io.ksmt.sort.KArray3Sort
@@ -1397,6 +1400,18 @@ open class KBitwuzlaExprInternalizer(val bitwuzlaCtx: KBitwuzlaContext) : KExprL
         mkConstant(expr.function) { expr.function.bitwuzlaFunctionSort() }
     }
 
+    override fun transform(expr: KAdtConstructorApp): KExpr<KAdtSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in Bitwuzla")
+
+    override fun <T : KSort> transform(expr: KAdtSelectorApp<T>): KExpr<T> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in Bitwuzla")
+
+    override fun transform(expr: KAdtTesterApp): KExpr<KBoolSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in Bitwuzla")
+
+    override fun <T : KSort> transform(expr: KAdtUpdateFieldApp<T>): KExpr<KAdtSort> =
+        throw KSolverUnsupportedFeatureException("ADT are not supported in Bitwuzla")
+
     override fun transform(expr: KUninterpretedSortValue): KExpr<KUninterpretedSort> = expr.transform {
         Native.bitwuzlaMkBvValueUint32(
             bitwuzla,
@@ -1562,6 +1577,9 @@ open class KBitwuzlaExprInternalizer(val bitwuzlaCtx: KBitwuzlaContext) : KExprL
         override fun visit(sort: KRealSort) =
             throw KSolverUnsupportedFeatureException("Unsupported sort $sort")
 
+        override fun visit(sort: KAdtSort) =
+            throw KSolverUnsupportedFeatureException("Unsupported sort $sort")
+
         /**
          * Replace Uninterpreted sorts with (BitVec 32).
          * The sort universe size is limited by 2^32 values which should be enough.
@@ -1707,6 +1725,8 @@ open class KBitwuzlaExprInternalizer(val bitwuzlaCtx: KBitwuzlaContext) : KExprL
         override fun <S : KBvSort> visit(sort: S): Boolean = false
         override fun <S : KFpSort> visit(sort: S): Boolean = false
         override fun visit(sort: KFpRoundingModeSort): Boolean = false
+        override fun visit(sort: KAdtSort): Boolean =
+            throw KSolverUnsupportedFeatureException("Unsupported sort $sort")
     }
 
     private fun KDecl<*>.hasUninterpretedSorts(): Boolean =

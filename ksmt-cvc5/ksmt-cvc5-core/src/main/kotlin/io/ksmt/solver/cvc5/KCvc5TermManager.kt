@@ -13,6 +13,8 @@ import it.unimi.dsi.fastutil.objects.ObjectOpenCustomHashSet
 class KCvc5TermManager : AutoCloseable {
     val termManager: TermManager = TermManager()
 
+    val datatypes = KCvc5DatatypeRegistry(this)
+
     fun mkTerm(kind: Kind): Term =
         termManager.mkTerm(kind).also { registerPointer(it) }
 

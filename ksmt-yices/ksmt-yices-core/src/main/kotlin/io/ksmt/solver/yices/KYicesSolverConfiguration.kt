@@ -41,6 +41,10 @@ class KYicesSolverConfigurationImpl(private val config: Config) : KYicesSolverCo
             throw KSolverUnsupportedFeatureException("Unsupported theory $FP")
         }
 
+        if (KTheory.DT in theories) {
+            throw KSolverUnsupportedFeatureException("Unsupported theory ${KTheory.DT}")
+        }
+
         // Yices requires MCSAT for the arithmetic theories
         if (setOf(LIA, LRA, NIA, NRA).intersect(theories).isNotEmpty()) {
             return

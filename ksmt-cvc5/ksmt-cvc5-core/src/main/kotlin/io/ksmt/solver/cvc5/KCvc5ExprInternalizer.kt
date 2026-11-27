@@ -6,6 +6,10 @@ import io.github.cvc5.Solver
 import io.github.cvc5.Sort
 import io.github.cvc5.Term
 import io.ksmt.decl.KDecl
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
 import io.ksmt.expr.KAddArithExpr
 import io.ksmt.expr.KAndBinaryExpr
 import io.ksmt.expr.KAndExpr
@@ -183,6 +187,7 @@ import io.ksmt.sort.KFpSort
 import io.ksmt.sort.KRealSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 
 @Suppress("LargeClass")
 class KCvc5ExprInternalizer(
@@ -223,6 +228,26 @@ class KCvc5ExprInternalizer(
             } else {
                 decl.mkFunctionApp(args.asList())
             }
+        }
+    }
+
+    override fun transform(expr: KAdtConstructorApp) = with(expr) {
+        transformArray(args) { args: Array<Term> ->
+            tm.mkTerm(Kind.APPLY_CONSTRUCTOR, arrayOf(decl.internalizeDecl()) + args)
+        }
+    }
+
+    override fun <T : KSort> transform(expr: KAdtSelectorApp<T>) = with(expr) {
+        transform(value) { v: Term -> tm.mkTerm(Kind.APPLY_SELECTOR, decl.internalizeDecl(), v) }
+    }
+
+    override fun transform(expr: KAdtTesterApp) = with(expr) {
+        transform(value) { v: Term -> tm.mkTerm(Kind.APPLY_TESTER, decl.internalizeDecl(), v) }
+    }
+
+    override fun <T : KSort> transform(expr: KAdtUpdateFieldApp<T>) = with(expr) {
+        transform(value, fieldValue) { v: Term, f: Term ->
+            tm.mkTerm(Kind.APPLY_UPDATER, decl.internalizeDecl(), v, f)
         }
     }
 
@@ -1151,6 +1176,7 @@ class KCvc5ExprInternalizer(
      * Since all Int values are known to be distinct, this
      * assertion forces that all values of T are also distinct.
      * */
+
     override fun transform(expr: KUninterpretedSortValue): KExpr<KUninterpretedSort> = with(expr) {
         transform(mkUniqueValueDescriptor(expr.valueIdx)) { descriptorExpr: Term ->
             val exprSort = sort.internalizeSort()

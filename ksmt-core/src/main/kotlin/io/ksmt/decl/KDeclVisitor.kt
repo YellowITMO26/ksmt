@@ -1,5 +1,6 @@
 package io.ksmt.decl
 
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.sort.KArithSort
 import io.ksmt.sort.KArray2Sort
 import io.ksmt.sort.KArray3Sort
@@ -22,6 +23,11 @@ interface KDeclVisitor<T> {
 
     fun <S : KSort> visit(decl: KFuncDecl<S>): T
     fun <S : KSort> visit(decl: KConstDecl<S>): T = visit(decl as KFuncDecl<S>)
+
+    fun visit(decl: KAdtCtorDecl): T = visit(decl as KFuncDecl<KAdtSort>)
+    fun <S : KSort> visit(decl: KAdtSelectorDecl<S>): T = visit(decl as KFuncDecl<S>)
+    fun visit(decl: KAdtTesterDecl): T = visit(decl as KFuncDecl<KBoolSort>)
+    fun <S : KSort> visit(decl: KAdtUpdateFieldDecl<S>): T = visit(decl as KFuncDecl<KAdtSort>)
 
     fun visit(decl: KAndDecl): T = visit(decl as KFuncDecl<KBoolSort>)
     fun visit(decl: KNotDecl): T = visit(decl as KFuncDecl<KBoolSort>)

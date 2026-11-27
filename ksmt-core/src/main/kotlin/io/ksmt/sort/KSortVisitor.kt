@@ -1,5 +1,8 @@
 package io.ksmt.sort
 
+import io.ksmt.sort.adt.KAdtSort
+import io.ksmt.sort.adt.KAdtTypeParameterSort
+
 interface KSortVisitor<T> {
     fun visit(sort: KSort): Any = error("visitor is not implemented for sort $sort")
     fun visit(sort: KBoolSort): T
@@ -13,4 +16,7 @@ interface KSortVisitor<T> {
     fun <R : KSort> visit(sort: KArrayNSort<R>): T
     fun visit(sort: KFpRoundingModeSort): T
     fun visit(sort: KUninterpretedSort): T
+    fun visit(sort: KAdtSort): T
+    fun visit(sort: KAdtTypeParameterSort): T =
+        error("Datatype type parameter $sort is not expected outside of datatype definitions")
 }

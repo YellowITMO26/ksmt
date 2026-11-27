@@ -26,6 +26,7 @@ import io.ksmt.sort.KBvSort
 import io.ksmt.sort.KFpSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KUninterpretedSort
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.utils.uncheckedCast
 
 open class KExprSimplifier(override val ctx: KContext) :
@@ -52,6 +53,7 @@ open class KExprSimplifier(override val ctx: KContext) :
             is KFpSort -> simplifyEqFp(lhs as KExpr<KFpSort>, rhs.uncheckedCast())
             is KArraySortBase<*> -> simplifyEqArray(lhs as KExpr<KArraySortBase<KSort>>, rhs.uncheckedCast())
             is KUninterpretedSort -> simplifyEqUninterpreted(lhs.uncheckedCast(), rhs.uncheckedCast())
+            is KAdtSort -> simplifyEqAdt(lhs as KExpr<KAdtSort>, rhs.uncheckedCast())
             else -> withExpressionsOrdered(lhs, rhs, ::mkEqNoSimplify)
         }
     }
@@ -121,6 +123,7 @@ open class KExprSimplifier(override val ctx: KContext) :
             is KBvSort -> areDefinitelyDistinctBv(lhs as KExpr<KBvSort>, rhs.uncheckedCast())
             is KFpSort -> areDefinitelyDistinctFp(lhs as KExpr<KFpSort>, rhs.uncheckedCast())
             is KUninterpretedSort -> areDefinitelyDistinctUninterpreted(lhs.uncheckedCast(), rhs.uncheckedCast())
+            is KAdtSort -> areDefinitelyDistinctAdt(lhs as KExpr<KAdtSort>, rhs.uncheckedCast())
             else -> false
         }
     }

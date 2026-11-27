@@ -23,6 +23,7 @@ import org.ksmt.solver.bitwuzla.bindings.BitwuzlaSort
 import org.ksmt.solver.bitwuzla.bindings.BitwuzlaTerm
 import org.ksmt.solver.bitwuzla.bindings.Native
 import io.ksmt.solver.util.KExprLongInternalizerBase.Companion.NOT_INTERNALIZED
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.sort.KArray2Sort
 import io.ksmt.sort.KArray3Sort
 import io.ksmt.sort.KArrayNSort
@@ -360,6 +361,9 @@ open class KBitwuzlaContext(val ctx: KContext) : AutoCloseable {
         }
 
         override fun visit(sort: KRealSort) {
+        }
+
+        override fun visit(sort: KAdtSort) {
         }
 
         override fun <S : KBvSort> visit(sort: S) {

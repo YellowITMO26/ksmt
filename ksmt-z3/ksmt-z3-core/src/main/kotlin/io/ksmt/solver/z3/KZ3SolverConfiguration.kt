@@ -87,6 +87,9 @@ class KZ3SolverLazyConfiguration(params: Params) : KZ3SolverConfigurationImpl(pa
         val requestedTheories = theories
         if (requestedTheories.isNullOrEmpty()) return GENERAL_SOLVER
 
+        // Z3 has no specialized solvers for datatypes combinations
+        if (KTheory.DT in requestedTheories) return GENERAL_SOLVER
+
         val hasIntegerArithmetic = LIA in requestedTheories || NIA in requestedTheories
 
         if (BV in requestedTheories && !hasIntegerArithmetic) {

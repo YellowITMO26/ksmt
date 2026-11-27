@@ -19,7 +19,8 @@ import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap
 @Suppress("TooManyFunctions")
 class KZ3Context(
     ksmtCtx: KContext,
-    private val ctx: Context
+    private val ctx: Context,
+    val datatypes: KZ3DatatypeRegistry = KZ3DatatypeRegistry(ctx)
 ) : AutoCloseable {
     constructor(ksmtCtx: KContext) : this(ksmtCtx, Context())
 
@@ -274,6 +275,7 @@ class KZ3Context(
 
     fun releaseNativeMemory() {
         uninterpretedSortValueInterpreter.clear()
+
 
         uninterpretedSortValueDecls.keys.decRefAll()
         uninterpretedSortValueDecls.clear()

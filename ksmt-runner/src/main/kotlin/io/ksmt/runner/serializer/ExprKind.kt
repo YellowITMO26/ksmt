@@ -141,4 +141,8 @@ enum class ExprKind {
     ExistentialQuantifier,
     UniversalQuantifier,
     UninterpretedSortValue,
+    AdtConstructorApp,
+    AdtSelectorApp,
+    AdtTesterApp,
+    AdtUpdateFieldApp,
 }

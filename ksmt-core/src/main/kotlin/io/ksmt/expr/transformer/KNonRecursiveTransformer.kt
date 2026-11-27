@@ -1,5 +1,10 @@
 package io.ksmt.expr.transformer
 
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.KContext
 import io.ksmt.expr.KAddArithExpr
 import io.ksmt.expr.KAndBinaryExpr
@@ -670,6 +675,29 @@ abstract class KNonRecursiveTransformer(override val ctx: KContext) : KNonRecurs
     override fun transform(expr: KUniversalQuantifier): KExpr<KBoolSort> =
         transformExprAfterTransformedDefault(expr, expr.body, ::transformExpr) { body ->
             mkUniversalQuantifier(body, expr.bounds)
+        }
+
+    // algebraic datatypes
+    override fun transform(expr: KAdtConstructorApp): KExpr<KAdtSort> =
+        transformExprAfterTransformedDefault(expr, expr.args, ::transformApp) { args ->
+            mkAdtConstructorApp(expr.decl, args)
+        }
+
+    override fun <T : KSort> transform(expr: KAdtSelectorApp<T>): KExpr<T> =
+        transformExprAfterTransformedDefault(expr, expr.value, ::transformApp) { value ->
+            mkAdtSelectorApp(expr.decl, value)
+        }
+
+    override fun transform(expr: KAdtTesterApp): KExpr<KBoolSort> =
+        transformExprAfterTransformedDefault(expr, expr.value, ::transformApp) { value ->
+            mkAdtTesterApp(expr.decl, value)
+        }
+
+    override fun <T : KSort> transform(expr: KAdtUpdateFieldApp<T>): KExpr<KAdtSort> =
+        transformExprAfterTransformedDefault(
+            expr, expr.value, expr.fieldValue, ::transformApp
+        ) { value, fieldValue ->
+            mkAdtUpdateFieldApp(expr.decl, value, fieldValue)
         }
 
     // utils

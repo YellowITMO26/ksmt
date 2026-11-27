@@ -1,9 +1,24 @@
 package io.ksmt
 
+import io.ksmt.expr.KAdtConstructorApp
+import io.ksmt.expr.KAdtSelectorApp
+import io.ksmt.expr.KAdtTesterApp
+import io.ksmt.expr.KAdtUpdateFieldApp
+import io.ksmt.decl.KAdtCtorDecl
+import io.ksmt.decl.KAdtSelectorDecl
+import io.ksmt.decl.KAdtTesterDecl
+import io.ksmt.decl.KAdtUpdateFieldDecl
+import io.ksmt.sort.adt.KAdtSort
+import io.ksmt.sort.adt.KAdtTypeParameterSort
+import io.ksmt.sort.adt.KAdtDefinition
+import io.ksmt.sort.adt.KAdtDefinitionsBuilder
+import io.ksmt.sort.adt.KAdtCtorsBuilder
+import io.ksmt.expr.rewrite.simplify.simplifyAdtConstructorApp
+import io.ksmt.expr.rewrite.simplify.simplifyAdtSelectorApp
+import io.ksmt.expr.rewrite.simplify.simplifyAdtTesterApp
+import io.ksmt.expr.rewrite.simplify.simplifyAdtUpdateFieldApp
 import io.ksmt.KContext.AstManagementMode.GC
-import io.ksmt.KContext.AstManagementMode.NO_GC
 import io.ksmt.KContext.OperationMode.CONCURRENT
-import io.ksmt.KContext.OperationMode.SINGLE_THREAD
 import io.ksmt.KContext.SimplificationMode.NO_SIMPLIFY
 import io.ksmt.KContext.SimplificationMode.SIMPLIFY
 import io.ksmt.cache.AstInterner
@@ -1161,7 +1176,7 @@ open class KContext(
 
     /**
      * Create an array store expression (store [array] [index] [value]) without cache.
-     * Cache is used to speed up [mkArraySelect] operation simplification 
+     * Cache is used to speed up [mkArraySelect] operation simplification
      * but can result in a huge memory consumption.
      *
      * @see [KArrayStoreBase] for the cache details.
@@ -1177,7 +1192,7 @@ open class KContext(
 
     /**
      * Create an array store expression (store [array] [index0] [index1] [value]) without cache.
-     * Cache is used to speed up [mkArraySelect] operation simplification 
+     * Cache is used to speed up [mkArraySelect] operation simplification
      * but can result in a huge memory consumption.
      *
      * @see [KArrayStoreBase] for the cache details.
@@ -1194,7 +1209,7 @@ open class KContext(
 
     /**
      * Create an array store expression (store [array] [index0] [index1] [index2] [value]) without cache.
-     * Cache is used to speed up [mkArraySelect] operation simplification 
+     * Cache is used to speed up [mkArraySelect] operation simplification
      * but can result in a huge memory consumption.
      *
      * @see [KArrayStoreBase] for the cache details.
@@ -4287,6 +4302,194 @@ open class KContext(
             KUninterpretedSortValue(this, sort, valueIdx)
         }
 
+    private val adtSortCache = mkCache<KAdtSort, KAdtSort>(operationMode)
+    private val adtConstructorDeclCache = mkCache<Pair<KAdtSort, Int>, KAdtCtorDecl>(operationMode)
+    private val adtSelectorDeclCache = mkCache<Triple<KAdtSort, Int, Int>, KAdtSelectorDecl<out KSort>>(operationMode)
+    private val adtTesterDeclCache = mkCache<Pair<KAdtSort, Int>, KAdtTesterDecl>(operationMode)
+    private val adtUpdateFieldDeclCache =
+        mkCache<Triple<KAdtSort, Int, Int>, KAdtUpdateFieldDecl<out KSort>>(operationMode)
+    private val adtConstructorAppCache = mkAstInterner<KAdtConstructorApp>()
+    private val adtSelectorAppCache = mkAstInterner<KAdtSelectorApp<out KSort>>()
+    private val adtTesterAppCache = mkAstInterner<KAdtTesterApp>()
+    private val adtUpdateFieldAppCache = mkAstInterner<KAdtUpdateFieldApp<out KSort>>()
+
+    /**
+     * Create a datatype type parameter sort named [name].
+     * Type parameters can only be used inside datatype definitions.
+     * */
+    fun mkAdtTypeParameterSort(name: String): KAdtTypeParameterSort = ensureContextActive {
+        KAdtTypeParameterSort(this, name)
+    }
+
+    /**
+     * Declare a group of (mutually recursive) algebraic datatypes.
+     *
+     * Example (polymorphic list and a tree with a list of children):
+     * ```
+     * val (list, tree) = mkAdtDefinitions {
+     *     val list = declare("List", "T")
+     *     val tree = declare("Tree")
+     *     list.define {
+     *         addConstructor("nil")
+     *         addConstructor("cons", "head" to list.typeParameters[0], "tail" to selfSort)
+     *     }
+     *     tree.define {
+     *         addConstructor("node", "value" to intSort, "children" to list.sort(selfSort))
+     *     }
+     * }
+     * ```
+     * */
+    fun mkAdtDefinitions(
+        body: KAdtDefinitionsBuilder.() -> Unit
+    ): List<KAdtDefinition> = ensureContextActive {
+        val builder = KAdtDefinitionsBuilder(this)
+        builder.body()
+        builder.build()
+    }
+
+    fun mkAdtDefinitionsBuilder(): KAdtDefinitionsBuilder = ensureContextActive {
+        KAdtDefinitionsBuilder(this)
+    }
+
+    fun mkAdtDefinition(
+        name: String,
+        typeParameters: List<String> = emptyList(),
+        body: KAdtCtorsBuilder.() -> Unit
+    ): KAdtDefinition = mkAdtDefinitions {
+        val definition = declare(name, typeParameters)
+        definition.define(body)
+    }.single()
+
+    /**
+     * Instantiate datatype [definition] with type arguments [args].
+     * */
+    open fun mkAdtSort(
+        definition: KAdtDefinition,
+        args: List<KSort> = emptyList()
+    ): KAdtSort = ensureContextActive {
+        require(definition.ctx === this) { "Context mismatch" }
+        ensureContextMatch(args)
+        val sort = KAdtSort(this, definition, args)
+        adtSortCache.putIfAbsent(sort, sort) ?: sort
+    }
+
+    fun mkAdtConstructorDecl(sort: KAdtSort, constructorIndex: Int): KAdtCtorDecl =
+        ensureContextActive {
+            ensureContextMatch(sort)
+            val key = sort to constructorIndex
+            adtConstructorDeclCache[key] ?: run {
+                val decl = KAdtCtorDecl(this, sort, constructorIndex)
+                adtConstructorDeclCache.putIfAbsent(key, decl) ?: decl
+            }
+        }
+
+    fun <T : KSort> mkAdtSelectorDecl(
+        sort: KAdtSort,
+        constructorIndex: Int,
+        fieldIndex: Int
+    ): KAdtSelectorDecl<T> = ensureContextActive {
+        ensureContextMatch(sort)
+            val key = Triple(sort, constructorIndex, fieldIndex)
+            (adtSelectorDeclCache[key] ?: run {
+                val decl = KAdtSelectorDecl<T>(this, sort, constructorIndex, fieldIndex)
+                adtSelectorDeclCache.putIfAbsent(key, decl) ?: decl
+            }).uncheckedCast()
+        }
+
+    fun mkAdtTesterDecl(sort: KAdtSort, constructorIndex: Int): KAdtTesterDecl =
+        ensureContextActive {
+            ensureContextMatch(sort)
+            val key = sort to constructorIndex
+            adtTesterDeclCache[key] ?: run {
+                val decl = KAdtTesterDecl(this, sort, constructorIndex)
+                adtTesterDeclCache.putIfAbsent(key, decl) ?: decl
+            }
+        }
+
+    fun <T : KSort> mkAdtUpdateFieldDecl(
+        sort: KAdtSort,
+        constructorIndex: Int,
+        fieldIndex: Int
+    ): KAdtUpdateFieldDecl<T> = ensureContextActive {
+        ensureContextMatch(sort)
+            val key = Triple(sort, constructorIndex, fieldIndex)
+            (adtUpdateFieldDeclCache[key] ?: run {
+                val decl = KAdtUpdateFieldDecl<T>(this, sort, constructorIndex, fieldIndex)
+                adtUpdateFieldDeclCache.putIfAbsent(key, decl) ?: decl
+            }).uncheckedCast()
+        }
+
+    open fun mkAdtConstructorApp(
+        constructor: KAdtCtorDecl,
+        args: List<KExpr<*>>
+    ): KExpr<KAdtSort> =
+        mkSimplified(constructor, args, KContext::simplifyAdtConstructorApp, ::mkAdtConstructorAppNoSimplify)
+
+    open fun mkAdtConstructorAppNoSimplify(
+        constructor: KAdtCtorDecl,
+        args: List<KExpr<*>>
+    ): KAdtConstructorApp = adtConstructorAppCache.createIfContextActive {
+        ensureContextMatch(constructor)
+        ensureContextMatch(args)
+        constructor.checkArgSorts(args)
+        KAdtConstructorApp(this, constructor, args.uncheckedCast())
+    }
+
+    /**
+     * Create a datatype field selector application (sel [value]).
+     * */
+    open fun <T : KSort> mkAdtSelectorApp(
+        selector: KAdtSelectorDecl<T>,
+        value: KExpr<KAdtSort>
+    ): KExpr<T> = mkSimplified(selector, value, KContext::simplifyAdtSelectorApp, ::mkAdtSelectorAppNoSimplify)
+
+    open fun <T : KSort> mkAdtSelectorAppNoSimplify(
+        selector: KAdtSelectorDecl<T>,
+        value: KExpr<KAdtSort>
+    ): KAdtSelectorApp<T> = adtSelectorAppCache.createIfContextActive {
+        ensureContextMatch(selector, value)
+        selector.checkArgSorts(listOf(value))
+        KAdtSelectorApp(this, selector, value)
+    }.uncheckedCast()
+
+    /**
+     * Create a datatype constructor tester application (is-C [value]).
+     * */
+    open fun mkAdtTesterApp(
+        tester: KAdtTesterDecl,
+        value: KExpr<KAdtSort>
+    ): KExpr<KBoolSort> = mkSimplified(tester, value, KContext::simplifyAdtTesterApp, ::mkAdtTesterAppNoSimplify)
+
+    open fun mkAdtTesterAppNoSimplify(
+        tester: KAdtTesterDecl,
+        value: KExpr<KAdtSort>
+    ): KAdtTesterApp = adtTesterAppCache.createIfContextActive {
+        ensureContextMatch(tester, value)
+        tester.checkArgSorts(listOf(value))
+        KAdtTesterApp(this, tester, value)
+    }
+
+    /**
+     * Create a datatype field update application ((_ update-field sel) [value] [fieldValue]).
+     * */
+    open fun <T : KSort> mkAdtUpdateFieldApp(
+        updater: KAdtUpdateFieldDecl<T>,
+        value: KExpr<KAdtSort>,
+        fieldValue: KExpr<T>
+    ): KExpr<KAdtSort> = mkSimplified(
+        updater, value, fieldValue, KContext::simplifyAdtUpdateFieldApp, ::mkAdtUpdateFieldAppNoSimplify
+    )
+
+    open fun <T : KSort> mkAdtUpdateFieldAppNoSimplify(
+        updater: KAdtUpdateFieldDecl<T>,
+        value: KExpr<KAdtSort>,
+        fieldValue: KExpr<T>
+    ): KAdtUpdateFieldApp<T> = adtUpdateFieldAppCache.createIfContextActive {
+        ensureContextMatch(updater, value, fieldValue)
+        updater.checkArgSorts(listOf(value, fieldValue))
+        KAdtUpdateFieldApp(this, updater, value, fieldValue)
+    }.uncheckedCast()
+
     // default values
     val defaultValueSampler: KSortVisitor<KExpr<*>> by lazy {
         mkDefaultValueSampler()
@@ -4313,6 +4516,16 @@ open class KContext(
 
     open fun uninterpretedSortDefaultValue(sort: KUninterpretedSort): KUninterpretedSortValue =
         mkUninterpretedSortValue(sort, valueIdx = 0)
+
+    /**
+     * Default datatype value: a well-founded (finite) constructor
+     * applied to the default values of its fields.
+     * */
+    open fun adtSortDefaultValue(sort: KAdtSort): KExpr<KAdtSort> {
+        val constructor = sort.constructors[sort.definition.wellFoundedConstructorIndex]
+        val args = constructor.argSorts.map { it.sampleValue() }
+        return mkAdtConstructorApp(constructor, args)
+    }
 
     /*
     * declarations

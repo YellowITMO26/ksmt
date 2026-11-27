@@ -15,6 +15,15 @@ import io.ksmt.sort.KIntSort
 import io.ksmt.sort.KSort
 import io.ksmt.sort.KUninterpretedSort
 import io.ksmt.utils.uncheckedCast
+import io.ksmt.KContext
+import io.ksmt.decl.KAdtCtorDecl
+import io.ksmt.decl.KAdtSelectorDecl
+import io.ksmt.decl.KAdtTesterDecl
+import io.ksmt.decl.KAdtUpdateFieldDecl
+import io.ksmt.sort.adt.KAdtCtorDefinition
+import io.ksmt.sort.adt.KAdtDefinitionsBuilder
+import io.ksmt.sort.adt.KAdtCtorFieldDefinition
+import io.ksmt.sort.adt.KAdtSort
 
 @OptIn(ExperimentalUnsignedTypes::class)
 class AstDeserializer(
@@ -36,6 +45,18 @@ class AstDeserializer(
     private fun readSort(): KSort = readAst()
     private fun <T : KSort> readExpr(): KExpr<T> = readAst()
 
+    private fun deserializeAdtGroupEntry(kind: AstKind, idx: Int) {
+        if (kind == AstKind.AdtGroup) {
+            input.deserializeAdtGroupHeader(idx)
+        } else {
+            input.deserializeAdtGroupBody(idx)
+        }
+        val groupEndMarker = input.readInt()
+        check(groupEndMarker == AstSerializationCtx.SERIALIZED_AST_ENTRY_END) {
+            "Serialization failed: end marker expected"
+        }
+    }
+
     fun deserializeAst(): KAst {
         while (true) {
             val idx = input.readInt()
@@ -45,30 +66,46 @@ class AstDeserializer(
             }
 
             val kind = input.readEnum<AstKind>()
-            val deserialized = when (kind) {
-                AstKind.Expr -> {
-                    val exprKind = input.readEnum<ExprKind>()
-                    input.deserializeExpr(exprKind)
+            if (kind == AstKind.AdtGroup || kind == AstKind.AdtGroupBody) {
+                deserializeAdtGroupEntry(kind, idx)
+            } else {
+                val deserialized = when (kind) {
+                    AstKind.Expr -> {
+                        val exprKind = input.readEnum<ExprKind>()
+                        input.deserializeExpr(exprKind)
+                    }
+
+                    AstKind.Sort -> {
+                        val sortKind = input.readEnum<SortKind>()
+                        input.deserializeSort(sortKind)
+                    }
+
+                    AstKind.Decl -> input.deserializeDecl()
+                    AstKind.AdtDecl -> input.deserializeAdtDecl()
+                    AstKind.AdtGroup, AstKind.AdtGroupBody -> error("Unexpected datatype group")
                 }
 
-                AstKind.Sort -> {
-                    val sortKind = input.readEnum<SortKind>()
-                    input.deserializeSort(sortKind)
+                val entryEndMarker = input.readInt()
+                check(entryEndMarker == AstSerializationCtx.SERIALIZED_AST_ENTRY_END) {
+                    "Serialization failed: end marker expected"
                 }
 
-                AstKind.Decl -> input.deserializeDecl()
+                serializationCtx.writeAst(idx, deserialized)
             }
-
-            val entryEndMarker = input.readInt()
-            check(entryEndMarker == AstSerializationCtx.SERIALIZED_AST_ENTRY_END) {
-                "Serialization failed: end marker expected"
-            }
-
-            serializationCtx.writeAst(idx, deserialized)
         }
 
         val serializedAstIdx = input.readInt()
         return serializationCtx.getAstByIndexOrError(serializedAstIdx)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun AbstractBuffer.deserializeAdtDecl(): KDecl<*> = with(serializationCtx.ctx) {
+        when (readEnum<AdtDeclKind>()) {
+            AdtDeclKind.Constructor -> mkAdtConstructorDecl(readSort() as KAdtSort, readInt())
+            AdtDeclKind.Selector -> mkAdtSelectorDecl<KSort>(readSort() as KAdtSort, readInt(), readInt())
+            AdtDeclKind.Tester -> mkAdtTesterDecl(readSort() as KAdtSort, readInt())
+            AdtDeclKind.UpdateField -> mkAdtUpdateFieldDecl<KSort>(readSort() as KAdtSort, readInt(), readInt())
+        }
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -87,6 +124,7 @@ class AstDeserializer(
         mkFreshFuncDecl(name, sort, argSorts as List<KSort>)
     }
 
+    @Suppress("ComplexMethod")
     private fun AbstractBuffer.deserializeSort(sortKind: SortKind): KSort = with(serializationCtx.ctx) {
         when (sortKind) {
             SortKind.Bool -> boolSort
@@ -100,7 +138,37 @@ class AstDeserializer(
             SortKind.Array3 -> mkArraySort(readSort(), readSort(), readSort(), readSort())
             SortKind.ArrayN -> mkArrayNSort(readAstArray().uncheckedCast(), readSort())
             SortKind.Uninterpreted -> mkUninterpretedSort(readString())
+            SortKind.AdtTypeParameter -> mkAdtTypeParameterSort(readString())
+            SortKind.Adt -> {
+                val group = serializationCtx.getAdtGroupByIndexOrError(readInt())
+                val definition = group[readInt()]
+                mkAdtSort(definition, readAstArray().uncheckedCast())
+            }
         }
+    }
+
+    private val pendingAdtGroups = HashMap<Int, KAdtDefinitionsBuilder>()
+
+    private fun AbstractBuffer.deserializeAdtGroupHeader(idx: Int) {
+        val builder = serializationCtx.ctx.mkAdtDefinitionsBuilder()
+        val group = List(readInt()) {
+            val name = readString()
+            builder.declare(name, List(readInt()) { readString() })
+        }
+        pendingAdtGroups[idx] = builder
+        serializationCtx.writeAdtGroup(idx, group)
+    }
+
+    private fun AbstractBuffer.deserializeAdtGroupBody(idx: Int) {
+        val builder = pendingAdtGroups.remove(idx) ?: error("Serialization failed: datatype group header expected")
+        serializationCtx.getAdtGroupByIndexOrError(idx).forEach { definition ->
+            val constructors = List(readInt()) {
+                val name = readString()
+                KAdtCtorDefinition(name, List(readInt()) { KAdtCtorFieldDefinition(readString(), readSort()) })
+            }
+            builder.define(definition, constructors)
+        }
+        builder.build()
     }
 
     @Suppress("UNCHECKED_CAST", "LongMethod", "ComplexMethod")
@@ -287,9 +355,23 @@ class AstDeserializer(
             ExprKind.UninterpretedSortValue -> {
                 mkUninterpretedSortValue(readSort() as KUninterpretedSort, readInt())
             }
+            ExprKind.AdtConstructorApp -> mkAdtConstructorAppNoSimplify(
+                readDecl() as KAdtCtorDecl,
+                readAstArray() as List<KExpr<*>>
+            )
+            ExprKind.AdtSelectorApp -> mkAdtSelectorAppNoSimplify(
+                readDecl() as KAdtSelectorDecl<KSort>,
+                readExpr()
+            )
+            ExprKind.AdtTesterApp -> mkAdtTesterAppNoSimplify(readDecl() as KAdtTesterDecl, readExpr())
+            ExprKind.AdtUpdateFieldApp -> mkAdtUpdateFieldAppNoSimplify(
+                readDecl() as KAdtUpdateFieldDecl<KSort>,
+                readExpr(),
+                readExpr()
+            )
         }
     }
-    
+
     private inline fun <S : KSort, A0 : KSort> deserialize(
         op: (KExpr<A0>) -> KExpr<S>
     ): KExpr<S> = op(readExpr())

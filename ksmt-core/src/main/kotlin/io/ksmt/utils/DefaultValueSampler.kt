@@ -2,6 +2,7 @@ package io.ksmt.utils
 
 import io.ksmt.KContext
 import io.ksmt.expr.KExpr
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.sort.KArray2Sort
 import io.ksmt.sort.KArray3Sort
 import io.ksmt.sort.KArrayNSort
@@ -49,4 +50,7 @@ open class DefaultValueSampler(val ctx: KContext) : KSortVisitor<KExpr<*>> {
 
     override fun visit(sort: KUninterpretedSort): KExpr<*> =
         ctx.uninterpretedSortDefaultValue(sort)
+
+    override fun visit(sort: KAdtSort): KExpr<*> =
+        ctx.adtSortDefaultValue(sort)
 }

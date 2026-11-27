@@ -12,12 +12,14 @@ import io.ksmt.expr.transformer.KNonRecursiveTransformer
 import io.ksmt.solver.KTheory
 import io.ksmt.solver.KTheory.Array
 import io.ksmt.solver.KTheory.BV
+import io.ksmt.solver.KTheory.DT
 import io.ksmt.solver.KTheory.FP
 import io.ksmt.solver.KTheory.LIA
 import io.ksmt.solver.KTheory.LRA
 import io.ksmt.solver.KTheory.NIA
 import io.ksmt.solver.KTheory.NRA
 import io.ksmt.solver.KTheory.UF
+import io.ksmt.sort.adt.KAdtSort
 import io.ksmt.sort.KArithSort
 import io.ksmt.sort.KArray2Sort
 import io.ksmt.sort.KArray3Sort
@@ -128,6 +130,17 @@ class KExprTheoryRequirement(ctx: KContext) : KNonRecursiveTransformer(ctx) {
 
         override fun visit(sort: KUninterpretedSort) {
             usedTheories += UF
+        }
+
+        private val visitedAdtSorts = hashSetOf<KAdtSort>()
+
+        override fun visit(sort: KAdtSort) {
+            usedTheories += DT
+            if (!visitedAdtSorts.add(sort)) return
+            sort.args.forEach { it.accept(this) }
+            sort.definition.constructors.indices.forEach { ctorIdx ->
+                sort.fieldSorts(ctorIdx).forEach { it.accept(this) }
+            }
         }
     }
 }
