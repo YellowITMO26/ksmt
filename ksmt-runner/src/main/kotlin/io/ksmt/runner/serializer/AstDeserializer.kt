@@ -45,6 +45,18 @@ class AstDeserializer(
     private fun readSort(): KSort = readAst()
     private fun <T : KSort> readExpr(): KExpr<T> = readAst()
 
+    private fun deserializeAdtGroupEntry(kind: AstKind, idx: Int) {
+        if (kind == AstKind.AdtGroup) {
+            input.deserializeAdtGroupHeader(idx)
+        } else {
+            input.deserializeAdtGroupBody(idx)
+        }
+        val groupEndMarker = input.readInt()
+        check(groupEndMarker == AstSerializationCtx.SERIALIZED_AST_ENTRY_END) {
+            "Serialization failed: end marker expected"
+        }
+    }
+
     fun deserializeAst(): KAst {
         while (true) {
             val idx = input.readInt()
@@ -55,40 +67,31 @@ class AstDeserializer(
 
             val kind = input.readEnum<AstKind>()
             if (kind == AstKind.AdtGroup || kind == AstKind.AdtGroupBody) {
-                if (kind == AstKind.AdtGroup) {
-                    input.deserializeAdtGroupHeader(idx)
-                } else {
-                    input.deserializeAdtGroupBody(idx)
+                deserializeAdtGroupEntry(kind, idx)
+            } else {
+                val deserialized = when (kind) {
+                    AstKind.Expr -> {
+                        val exprKind = input.readEnum<ExprKind>()
+                        input.deserializeExpr(exprKind)
+                    }
+
+                    AstKind.Sort -> {
+                        val sortKind = input.readEnum<SortKind>()
+                        input.deserializeSort(sortKind)
+                    }
+
+                    AstKind.Decl -> input.deserializeDecl()
+                    AstKind.AdtDecl -> input.deserializeAdtDecl()
+                    AstKind.AdtGroup, AstKind.AdtGroupBody -> error("Unexpected datatype group")
                 }
-                val groupEndMarker = input.readInt()
-                check(groupEndMarker == AstSerializationCtx.SERIALIZED_AST_ENTRY_END) {
+
+                val entryEndMarker = input.readInt()
+                check(entryEndMarker == AstSerializationCtx.SERIALIZED_AST_ENTRY_END) {
                     "Serialization failed: end marker expected"
                 }
-                continue
+
+                serializationCtx.writeAst(idx, deserialized)
             }
-
-            val deserialized = when (kind) {
-                AstKind.Expr -> {
-                    val exprKind = input.readEnum<ExprKind>()
-                    input.deserializeExpr(exprKind)
-                }
-
-                AstKind.Sort -> {
-                    val sortKind = input.readEnum<SortKind>()
-                    input.deserializeSort(sortKind)
-                }
-
-                AstKind.Decl -> input.deserializeDecl()
-                AstKind.AdtDecl -> input.deserializeAdtDecl()
-                AstKind.AdtGroup, AstKind.AdtGroupBody -> error("Unexpected datatype group")
-            }
-
-            val entryEndMarker = input.readInt()
-            check(entryEndMarker == AstSerializationCtx.SERIALIZED_AST_ENTRY_END) {
-                "Serialization failed: end marker expected"
-            }
-
-            serializationCtx.writeAst(idx, deserialized)
         }
 
         val serializedAstIdx = input.readInt()
@@ -121,6 +124,7 @@ class AstDeserializer(
         mkFreshFuncDecl(name, sort, argSorts as List<KSort>)
     }
 
+    @Suppress("ComplexMethod")
     private fun AbstractBuffer.deserializeSort(sortKind: SortKind): KSort = with(serializationCtx.ctx) {
         when (sortKind) {
             SortKind.Bool -> boolSort

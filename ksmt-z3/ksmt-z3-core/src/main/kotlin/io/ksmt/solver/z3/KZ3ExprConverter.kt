@@ -211,6 +211,7 @@ open class KZ3ExprConverter(
         return instance.takeIf { Native.isEqSort(nCtx, it.internalizedSort(), sort) }
     }
 
+    @Suppress("ComplexMethod")
     private fun reconstructAdtGroup(rootSort: Long): KSort {
         val groupSorts = mutableListOf<Long>()
         val visited = hashSetOf<Long>()

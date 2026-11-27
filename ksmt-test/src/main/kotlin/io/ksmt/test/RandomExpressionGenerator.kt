@@ -209,6 +209,13 @@ class RandomExpressionGenerator {
         private const val ADT_TREE = "Tree"
         private const val ADT_FOREST = "Forest"
 
+        /**
+         * Upper bound for the width of a generated bit-vector result.
+         * Concat chains in deep expressions grow the width exponentially,
+         * which leads to enormous BigInteger computations and memory usage.
+         * */
+        private const val MAX_GENERATED_BV_WIDTH = 1024L
+
         private val adtDefinitionsCache = java.util.WeakHashMap<KContext, Map<String, KAdtDefinition>>()
 
         private fun adtDefinitions(ctx: KContext): Map<String, KAdtDefinition> = synchronized(adtDefinitionsCache) {
@@ -436,6 +443,15 @@ class RandomExpressionGenerator {
                         SimpleArgument(((args[0] as SimpleArgument).value as Int) % 3 + 1),
                         args[1]
                     )
+
+                    /** Reject concats exceeding [MAX_GENERATED_BV_WIDTH]. */
+                    "mkBvConcatExpr", "mkBvConcatExprNoSimplify" -> {
+                        val width = args.sumOf { ((it as ExprArgument).value.sort as KBvSort).sizeBits.toLong() }
+                        if (width > MAX_GENERATED_BV_WIDTH) {
+                            generationFailed("Concat result width $width exceeds $MAX_GENERATED_BV_WIDTH bits")
+                        }
+                        args
+                    }
 
                     "mkFpRemExpr" -> {
                         val argSort = (args[0] as? ExprArgument)?.value?.sort as? KFpSort

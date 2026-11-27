@@ -49,12 +49,10 @@ fun <T : KSort> KContext.simplifyAdtSelectorApp(
     }
 
     // (sel_i ((_ update-field s_i v) x)) ==> v
-    if (value is KAdtUpdateFieldApp<*> &&
-        adtSort.definition.constructors.size == 1 &&
-        value.decl.constructorIndex == constructorIndex &&
-        value.decl.fieldIndex == fieldIndex
-    ) {
-        return value.fieldValue.uncheckedCast()
+    if (value is KAdtUpdateFieldApp<*> && adtSort.definition.constructors.size == 1) {
+        if (value.decl.constructorIndex == constructorIndex && value.decl.fieldIndex == fieldIndex) {
+            return value.fieldValue.uncheckedCast()
+        }
     }
 
     return mkAdtSelectorAppNoSimplify(selector, value)

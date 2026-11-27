@@ -25,13 +25,17 @@ class KAdtSort internal constructor(
         definition.constructors.indices.map { ctx.mkAdtConstructorDecl(this, it) }
     }
 
-    fun fieldSorts(constructorIndex: Int): List<KSort> =
-        definition.constructors[constructorIndex].fields.map {
-            ctx.substituteSorts(it.sort, definition.typeParameters.zip(args).toMap())
+    private val fieldSortsCache: List<List<KSort>> by lazy {
+        val substitution = definition.typeParameters.zip(args).toMap()
+        definition.constructors.map { ctor ->
+            ctor.fields.map { ctx.substituteSorts(it.sort, substitution) }
         }
+    }
+
+    fun fieldSorts(constructorIndex: Int): List<KSort> = fieldSortsCache[constructorIndex]
 
     fun fieldSort(constructorIndex: Int, fieldIndex: Int): KSort =
-        fieldSorts(constructorIndex)[fieldIndex]
+        fieldSortsCache[constructorIndex][fieldIndex]
 
     override fun <T> accept(visitor: KSortVisitor<T>): T = visitor.visit(this)
 

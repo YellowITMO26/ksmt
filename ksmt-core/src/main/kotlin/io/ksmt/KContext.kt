@@ -4303,6 +4303,11 @@ open class KContext(
         }
 
     private val adtSortCache = mkCache<KAdtSort, KAdtSort>(operationMode)
+    private val adtConstructorDeclCache = mkCache<Pair<KAdtSort, Int>, KAdtCtorDecl>(operationMode)
+    private val adtSelectorDeclCache = mkCache<Triple<KAdtSort, Int, Int>, KAdtSelectorDecl<out KSort>>(operationMode)
+    private val adtTesterDeclCache = mkCache<Pair<KAdtSort, Int>, KAdtTesterDecl>(operationMode)
+    private val adtUpdateFieldDeclCache =
+        mkCache<Triple<KAdtSort, Int, Int>, KAdtUpdateFieldDecl<out KSort>>(operationMode)
     private val adtConstructorAppCache = mkAstInterner<KAdtConstructorApp>()
     private val adtSelectorAppCache = mkAstInterner<KAdtSelectorApp<out KSort>>()
     private val adtTesterAppCache = mkAstInterner<KAdtTesterApp>()
@@ -4371,7 +4376,11 @@ open class KContext(
     fun mkAdtConstructorDecl(sort: KAdtSort, constructorIndex: Int): KAdtCtorDecl =
         ensureContextActive {
             ensureContextMatch(sort)
-            KAdtCtorDecl(this, sort, constructorIndex)
+            val key = sort to constructorIndex
+            adtConstructorDeclCache[key] ?: run {
+                val decl = KAdtCtorDecl(this, sort, constructorIndex)
+                adtConstructorDeclCache.putIfAbsent(key, decl) ?: decl
+            }
         }
 
     fun <T : KSort> mkAdtSelectorDecl(
@@ -4380,13 +4389,21 @@ open class KContext(
         fieldIndex: Int
     ): KAdtSelectorDecl<T> = ensureContextActive {
         ensureContextMatch(sort)
-        KAdtSelectorDecl(this, sort, constructorIndex, fieldIndex)
-    }
+            val key = Triple(sort, constructorIndex, fieldIndex)
+            (adtSelectorDeclCache[key] ?: run {
+                val decl = KAdtSelectorDecl<T>(this, sort, constructorIndex, fieldIndex)
+                adtSelectorDeclCache.putIfAbsent(key, decl) ?: decl
+            }).uncheckedCast()
+        }
 
     fun mkAdtTesterDecl(sort: KAdtSort, constructorIndex: Int): KAdtTesterDecl =
         ensureContextActive {
             ensureContextMatch(sort)
-            KAdtTesterDecl(this, sort, constructorIndex)
+            val key = sort to constructorIndex
+            adtTesterDeclCache[key] ?: run {
+                val decl = KAdtTesterDecl(this, sort, constructorIndex)
+                adtTesterDeclCache.putIfAbsent(key, decl) ?: decl
+            }
         }
 
     fun <T : KSort> mkAdtUpdateFieldDecl(
@@ -4395,8 +4412,12 @@ open class KContext(
         fieldIndex: Int
     ): KAdtUpdateFieldDecl<T> = ensureContextActive {
         ensureContextMatch(sort)
-        KAdtUpdateFieldDecl(this, sort, constructorIndex, fieldIndex)
-    }
+            val key = Triple(sort, constructorIndex, fieldIndex)
+            (adtUpdateFieldDeclCache[key] ?: run {
+                val decl = KAdtUpdateFieldDecl<T>(this, sort, constructorIndex, fieldIndex)
+                adtUpdateFieldDeclCache.putIfAbsent(key, decl) ?: decl
+            }).uncheckedCast()
+        }
 
     open fun mkAdtConstructorApp(
         constructor: KAdtCtorDecl,

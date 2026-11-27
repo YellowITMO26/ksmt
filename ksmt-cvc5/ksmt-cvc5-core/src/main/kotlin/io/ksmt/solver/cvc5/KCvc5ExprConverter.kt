@@ -949,29 +949,29 @@ open class KCvc5ExprConverter(
         return ctx.mkAdtSort(definition, args)
     }
 
-    private fun reconstructAdtGroup(root: Datatype): KAdtDefinition {
+    private fun enqueueNestedDatatypes(sort: Sort, queue: ArrayDeque<Datatype>) {
+        when {
+            sort.isDatatype && !sort.isTuple -> {
+                val datatype = tm.sortOp(sort) { datatype }
+                if (tm.datatypes.findDefinition(datatype) == null) queue.add(datatype)
+                if (sort.isInstantiated) {
+                    sort.instantiatedParameters.forEach { enqueueNestedDatatypes(tm.registerPointer(it), queue) }
+                }
+            }
+
+            sort.isArray -> {
+                enqueueNestedDatatypes(tm.sortOp(sort) { arrayIndexSort }, queue)
+                enqueueNestedDatatypes(tm.sortOp(sort) { arrayElementSort }, queue)
+            }
+
+            sort.isTuple -> sort.tupleSorts.forEach { enqueueNestedDatatypes(tm.registerPointer(it), queue) }
+        }
+    }
+
+    private fun collectDatatypeGroup(root: Datatype): Pair<List<Datatype>, KCvc5TermMap<Int>> {
         val group = mutableListOf<Datatype>()
         val groupIndices = KCvc5TermMap<Int>()
         val queue = ArrayDeque<Datatype>().apply { add(root) }
-
-        fun enqueueNested(sort: Sort) {
-            when {
-                sort.isDatatype && !sort.isTuple -> {
-                    val datatype = tm.sortOp(sort) { datatype }
-                    if (tm.datatypes.findDefinition(datatype) == null) queue.add(datatype)
-                    if (sort.isInstantiated) {
-                        sort.instantiatedParameters.forEach { enqueueNested(tm.registerPointer(it)) }
-                    }
-                }
-
-                sort.isArray -> {
-                    enqueueNested(tm.sortOp(sort) { arrayIndexSort })
-                    enqueueNested(tm.sortOp(sort) { arrayElementSort })
-                }
-
-                sort.isTuple -> sort.tupleSorts.forEach { enqueueNested(tm.registerPointer(it)) }
-            }
-        }
 
         while (queue.isNotEmpty()) {
             val datatype = queue.removeFirst()
@@ -980,10 +980,16 @@ open class KCvc5ExprConverter(
             datatype.forEach { ctor ->
                 tm.registerPointer(ctor).forEach { selector ->
                     tm.registerPointer(selector)
-                    enqueueNested(tm.registerPointer(selector.codomainSort))
+                    enqueueNestedDatatypes(tm.registerPointer(selector.codomainSort), queue)
                 }
             }
         }
+
+        return group to groupIndices
+    }
+
+    private fun reconstructAdtGroup(root: Datatype): KAdtDefinition {
+        val (group, groupIndices) = collectDatatypeGroup(root)
 
         val typeParameters = group.flatMap { datatype ->
             datatype.parameters.map { tm.registerPointer(it) }
@@ -1028,7 +1034,8 @@ open class KCvc5ExprConverter(
                 val ctors = group[idx].map { ctor ->
                     val fields = tm.registerPointer(ctor).map { selector ->
                         tm.registerPointer(selector)
-                        KAdtCtorFieldDefinition(selector.name, convertFieldSort(tm.registerPointer(selector.codomainSort)))
+                        val fieldSort = convertFieldSort(tm.registerPointer(selector.codomainSort))
+                        KAdtCtorFieldDefinition(selector.name, fieldSort)
                     }
                     KAdtCtorDefinition(ctor.name, fields)
                 }

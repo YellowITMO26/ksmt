@@ -246,12 +246,13 @@ open class KZ3SortInternalizer(
     }
 
     private fun checkForwardReferenceSupported(definition: KAdtDefinition) {
-        val declaring = declaringDefinition
-        if (definition in groupInProgress && definition.isParametric && declaring != null && !declaring.isParametric) {
-            throw KSolverUnsupportedFeatureException(
-                "Datatype ${declaring.name} references parametric datatype ${definition.name} " +
-                    "from the same mutually recursive group: this is not supported in Z3"
-            )
+        val declaring = declaringDefinition ?: return
+        if (definition !in groupInProgress || !definition.isParametric || declaring.isParametric) {
+            return
         }
+        throw KSolverUnsupportedFeatureException(
+            "Datatype ${declaring.name} references parametric datatype ${definition.name} " +
+                "from the same mutually recursive group: this is not supported in Z3"
+        )
     }
 }
